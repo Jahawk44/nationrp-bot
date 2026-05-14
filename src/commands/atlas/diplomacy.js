@@ -1,0 +1,389 @@
+const {
+    EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle,
+    StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle
+} = require('discord.js');
+const { FACTIONS } = require('../../data/constants');
+const { getNotificationChannel, isGM } = require('../../utils/helpers');
+
+const ONE_DAY = 24 * 60 * 60 * 1000;
+
+const FACTION_MECHANICS = {
+    'Tyrannite':      { unlock: 15, unlockText: 'Vitale market access, Empire Ruler candidacy',          penalty: -20, penaltyText: 'Vitale embargo' },
+    'Caossa':         { unlock: 10, unlockText: '+10% ore/metallurgy production',                        penalty: -20, penaltyText: 'Caossa trade routes blocked' },
+    'Sciatic League': { unlock: 10, unlockText: 'Trade route access',                                    penalty: null, penaltyText: null },
+    'The Mothers':    { unlock: 10, unlockText: 'Noble vitale upkeep halved for Sovereigns',             penalty: null, penaltyText: null },
+    'The Fathers':    { unlock: 10, unlockText: 'Military recruitment cap +50%',                         penalty: null, penaltyText: null },
+    'Atomic Guild':   { unlock: 15, unlockText: '+max(INT,WIS mod) to all rolls',                       penalty: -20, penaltyText: 'GM notification chance per tax tick' },
+    'Rhagaia':        { unlock: null, unlockText: '⚠️ Mechanic details pending lorebook confirmation.',  penalty: null, penaltyText: null },
+    'Sellesela':      { unlock: null, unlockText: '⚠️ Mechanic details pending lorebook confirmation.',  penalty: null, penaltyText: null },
+    'Gaius':          { unlock: null, unlockText: '⚠️ Mechanic details pending lorebook confirmation.',  penalty: null, penaltyText: null },
+};
+
+async function handleDiplomacy(interaction) {
+    const db = interaction.client.db;
+    const userId = interaction.user.id;
+    const relations = await db.all('SELECT * FROM relations WHERE user_id=?', userId);
+    const relMap = {};
+    for (const r of relations) relMap[r.faction_name] = r;
+
+    let lines = [];
+    for (const faction of FACTIONS) {
+        const score = relMap[faction]?.score || 0;
+        const segs = Math.round(Math.min(10, Math.max(0, (score + 30) / 6)));
+        const bar = '█'.repeat(segs) + '░'.repeat(10 - segs);
+        let tag;
+        if (faction === 'Tyrannite' && score <= -20) tag = 'EMBARGOED 🚫';
+        else if (score >= 15) tag = 'Allied ✅';
+        else if (score >= 0) tag = 'Neutral';
+        else if (score >= -10) tag = 'Strained ⚠️';
+        else tag = 'Hostile 🔴';
+        lines.push(`${faction}: ${bar} (${score > 0 ? '+' : ''}${score}) — ${tag}`);
+    }
+
+    const embed = new EmbedBuilder()
+        .setTitle('🤝 DIPLOMATIC LEDGER')
+        .setDescription(lines.join('\n'))
+        .setColor(0x00BFFF);
+
+    const menu = new StringSelectMenuBuilder()
+        .setCustomId(`diplo_view_${userId}`)
+        .setPlaceholder('Select a faction for detail...')
+        .addOptions(FACTIONS.slice(0, 25).map(f => ({ label: f, value: f })));
+
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`diplo_treaties_${userId}`).setLabel('View Treaties').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`diplo_routes_${userId}`).setLabel('View Trade Routes').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`diplo_treaty_${userId}`).setLabel('Propose Treaty').setStyle(ButtonStyle.Success)
+    );
+    const row2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`diplo_war_${userId}`).setLabel('⚔️ Declare War').setStyle(ButtonStyle.Danger)
+    );
+
+    return interaction.editReply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu), row, row2] });
+}
+
+async function handleFactionDetail(interaction, userId, factionName) {
+    const db = interaction.client.db;
+    if (interaction.user.id !== userId) return interaction.reply({ content: '⚠️ Only the player who opened this ledger may use it.', ephemeral: true });
+
+    const rel = await db.get('SELECT * FROM relations WHERE user_id=? AND faction_name=?', userId, factionName);
+    const score = rel?.score || 0;
+    const mech = FACTION_MECHANICS[factionName] || {};
+    const canBribe = !rel || !rel.last_bribe || (Date.now() - rel.last_bribe >= ONE_DAY);
+    const now = Date.now();
+
+    let desc = `**Current Standing:** ${score > 0 ? '+' : ''}${score}`;
+    if (mech.unlock !== null) {
+        const unlocked = score >= mech.unlock;
+        desc += `\n\n🔓 **Unlock at ${mech.unlock > 0 ? '+' : ''}${mech.unlock}:** ${mech.unlockText} ${unlocked ? '✅' : '🔒'}`;
+    }
+    if (mech.penalty !== null) {
+        const triggered = score <= mech.penalty;
+        desc += `\n\n⚠️ **Penalty at ${mech.penalty}:** ${mech.penaltyText} ${triggered ? '🔴 Active' : ''}`;
+    }
+    if (mech.unlock === null && mech.penalty === null) {
+        desc += `\n\n⚠️ *Mechanic details pending lorebook confirmation.*`;
+    }
+
+    const user = await db.get('SELECT balance, exotics FROM users WHERE id=?', userId);
+    const cooldownNote = canBribe ? '' : '\n*(Bribe on cooldown — 24h)*';
+
+    const embed = new EmbedBuilder()
+        .setTitle(`🤝 ${factionName}`)
+        .setDescription(desc)
+        .setColor(0x00BFFF);
+
+    const factionIndex = FACTIONS.indexOf(factionName);
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`diplo_bribe_gold_${userId}_${factionIndex}`).setEmoji('🪙').setLabel(`500 → +1`).setStyle(ButtonStyle.Primary).setDisabled(!canBribe || (user.balance || 0) < 500),
+        new ButtonBuilder().setCustomId(`diplo_bribe_exotic_${userId}_${factionIndex}`).setEmoji('🍷').setLabel(`1 → +3`).setStyle(ButtonStyle.Success).setDisabled(!canBribe || (user.exotics || 0) < 1),
+        new ButtonBuilder().setCustomId(`diplo_back_${userId}`).setLabel('← Back').setStyle(ButtonStyle.Secondary)
+    );
+
+    return interaction.editReply({ embeds: [embed], components: [row], content: cooldownNote || null });
+}
+
+async function handleBribe(interaction, userId, factionName, type) {
+    const db = interaction.client.db;
+    if (interaction.user.id !== userId) return interaction.reply({ content: '⚠️ Only the player who opened this ledger may use it.', ephemeral: true });
+
+    const rel = await db.get('SELECT * FROM relations WHERE user_id=? AND faction_name=?', userId, factionName);
+    if (rel && rel.last_bribe && (Date.now() - rel.last_bribe < ONE_DAY)) {
+        return interaction.reply({ content: '⚠️ Bribe on cooldown. Wait 24 hours between bribes per faction.', ephemeral: true });
+    }
+
+    const user = await db.get('SELECT balance, exotics FROM users WHERE id=?', userId);
+    const now = Date.now();
+
+    if (type === 'gold') {
+        if ((user.balance || 0) < 500) return interaction.reply({ content: '⚠️ Insufficient balance. Need 500 🪙.', ephemeral: true });
+        await db.run('UPDATE users SET balance=balance-500 WHERE id=?', userId);
+        await db.run(
+            'INSERT INTO relations (user_id, faction_name, score, last_bribe) VALUES (?,?,COALESCE((SELECT score FROM relations WHERE user_id=? AND faction_name=?),0)+1,?) ON CONFLICT(user_id,faction_name) DO UPDATE SET score=score+1, last_bribe=?',
+            userId, factionName, userId, factionName, now, now
+        );
+        return interaction.update({ content: `✅ +1 relation with **${factionName}** for 500 🪙.` });
+    }
+
+    if (type === 'exotic') {
+        if ((user.exotics || 0) < 1) return interaction.reply({ content: '⚠️ Insufficient exotics. Need 1 🍷.', ephemeral: true });
+        await db.run('UPDATE users SET exotics=exotics-1 WHERE id=?', userId);
+        await db.run(
+            'INSERT INTO relations (user_id, faction_name, score, last_bribe) VALUES (?,?,COALESCE((SELECT score FROM relations WHERE user_id=? AND faction_name=?),0)+3,?) ON CONFLICT(user_id,faction_name) DO UPDATE SET score=score+3, last_bribe=?',
+            userId, factionName, userId, factionName, now, now
+        );
+        return interaction.update({ content: `✅ +3 relation with **${factionName}** for 1 🍷 Exotic.` });
+    }
+}
+
+async function handleViewTreaties(interaction, userId) {
+    const db = interaction.client.db;
+    const treaties = await db.all(
+        'SELECT * FROM treaties WHERE (initiator_id=? OR partner_id=?) AND status NOT IN ("completed","broken")',
+        userId, userId
+    );
+    if (!treaties.length) return interaction.editReply({ content: 'No active treaties. Use **Propose Treaty** to negotiate with another player.\n\n*Treaties are binding. Only an admin can dissolve them.*' });
+
+    const lines = treaties.map(t => {
+        const partner = t.initiator_id === userId ? t.partner_id : t.initiator_id;
+        return `**#${t.id}** | ${t.treaty_type} with <@${partner}> | ${t.status} | ${t.turns_active} turns active`;
+    });
+
+    const embed = new EmbedBuilder().setTitle('📜 TREATIES').setColor(0x00BFFF).setDescription(lines.join('\n'));
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`diplo_view_${userId}`).setLabel('← Back to Ledger').setStyle(ButtonStyle.Secondary)
+    );
+    return interaction.editReply({ embeds: [embed], components: [row] });
+}
+
+async function handleViewRoutes(interaction, userId) {
+    const db = interaction.client.db;
+    const routes = await db.all(
+        'SELECT * FROM trade_routes WHERE (initiator_id=? OR partner_id=?) AND status NOT IN ("completed","broken")',
+        userId, userId
+    );
+    if (!routes.length) return interaction.editReply({ content: 'No active trade routes. Use `/atlas traderoute propose` to create one.' });
+
+    const lines = routes.map(r => {
+        const partnerLabel = r.partner_type === 'player'
+            ? `<@${r.initiator_id === userId ? r.partner_id : r.initiator_id}>` : r.partner_type;
+        return `**#${r.id}** | ${partnerLabel} | Give: ${r.give_amount} ${r.give_resource} → Receive: ${r.receive_amount} ${r.receive_resource} | ${r.turns_remaining}/${r.duration_turns} turns | ${r.status}`;
+    });
+
+    const embed = new EmbedBuilder().setTitle('🔄 TRADE ROUTES').setColor(0x00BFFF).setDescription(lines.join('\n'));
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`diplo_view_${userId}`).setLabel('← Back to Ledger').setStyle(ButtonStyle.Secondary)
+    );
+    return interaction.editReply({ embeds: [embed], components: [row] });
+}
+
+async function handleProposeTreaty(interaction, userId) {
+    // Show treaty type select
+    const menu = new StringSelectMenuBuilder()
+        .setCustomId(`diplo_treatysel_${userId}`)
+        .setPlaceholder('Select treaty type...')
+        .addOptions(
+            { label: 'Trade Pact', value: 'trade-pact', description: 'Facilitates resource exchange.' },
+            { label: 'Non-Aggression', value: 'non-aggression', description: 'Pledge to avoid hostile action.' },
+            { label: 'Alliance', value: 'alliance', description: 'Military and diplomatic union.' }
+        );
+
+    const embed = new EmbedBuilder().setTitle('🤝 PROPOSE TREATY').setColor(0x00BFFF).setDescription('Select a treaty type, then choose a partner player.');
+    return interaction.editReply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)] });
+}
+
+async function handleTreatyTypeSelect(interaction, userId) {
+    if (interaction.user.id !== userId) return interaction.reply({ content: '⚠️ Only the player who opened this may use it.', ephemeral: true });
+    const treatyType = interaction.values[0];
+
+    // Store selection, then show partner autocomplete via a button + modal
+    // Simpler: build a button that opens a modal with partner ID
+    await interaction.deferUpdate();
+    const embed = new EmbedBuilder()
+        .setTitle(`🤝 PROPOSE ${treatyType.replace(/[-_]/g, ' ').toUpperCase()}`)
+        .setColor(0x00BFFF)
+        .setDescription('Click below to enter the target player.');
+
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`diplo_treatyfinal_${userId}_${treatyType}`).setLabel('Choose Partner').setStyle(ButtonStyle.Primary)
+    );
+
+    return interaction.editReply({ embeds: [embed], components: [row] });
+}
+
+async function handleTreatyFinal(interaction, userId, treatyType) {
+    if (interaction.user.id !== userId) return interaction.reply({ content: '⚠️ Only the player who opened this may use it.', ephemeral: true });
+
+    const modal = new ModalBuilder()
+        .setCustomId(`diplo_treatymod_${userId}_${treatyType}`)
+        .setTitle('🤝 Enter Partner User ID');
+
+    modal.addComponents(new ActionRowBuilder().addComponents(
+        new TextInputBuilder().setCustomId('partner_id').setLabel('Partner User ID').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(30)
+    ));
+
+    return interaction.showModal(modal);
+}
+
+async function handleTreatyModalSubmit(interaction, userId, treatyType) {
+    const db = interaction.client.db;
+    const partnerId = interaction.fields.getTextInputValue('partner_id')?.trim();
+    await interaction.deferUpdate();
+
+    if (partnerId === userId) return interaction.editReply({ content: '⚠️ Cannot propose a treaty to yourself.' });
+
+    const target = await db.get('SELECT id FROM users WHERE id=? AND status="active"', partnerId);
+    if (!target) return interaction.editReply({ content: '⚠️ Target player not found or not active.' });
+
+    const result = await db.run(
+        'INSERT INTO treaties (initiator_id, partner_id, treaty_type, status) VALUES (?,?,?,"pending")',
+        userId, partnerId, treatyType
+    );
+    const treatyId = result.lastID;
+
+    const chan = await getNotificationChannel(interaction.client, { id: partnerId, notification_channel: null, last_tax_channel: null });
+    if (chan) {
+        const emb = new EmbedBuilder()
+            .setTitle('🤝 TREATY PROPOSAL')
+            .setDescription(`<@${userId}> proposes a **${treatyType.replace(/[-_]/g, ' ')}** treaty.\n\n*Treaties are binding. Only an admin can dissolve them.*`)
+            .setColor(0xFFD700);
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`treaty_accept_${treatyId}`).setLabel('Accept').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId(`treaty_reject_${treatyId}`).setLabel('Reject').setStyle(ButtonStyle.Danger)
+        );
+        try { await chan.send({ content: `<@${partnerId}>`, embeds: [emb], components: [row] }); } catch (_) {}
+    }
+
+    return interaction.editReply({ content: `📨 Treaty proposal sent to <@${partnerId}>. Awaiting response.` });
+}
+
+async function handleTreatyAccept(interaction, treatyId) {
+    const db = interaction.client.db;
+    const treaty = await db.get('SELECT * FROM treaties WHERE id=? AND partner_id=? AND status="pending"', treatyId, interaction.user.id);
+    if (!treaty) return interaction.reply({ content: '⚠️ This proposal is no longer valid.', ephemeral: true });
+
+    await db.run('UPDATE treaties SET status="active" WHERE id=?', treatyId);
+    const emb = EmbedBuilder.from(interaction.message.embeds[0]).setColor(0x00FF88).setTitle('✅ TREATY ACCEPTED');
+    await interaction.update({ embeds: [emb], components: [], content: interaction.message.content });
+
+    const chan = await getNotificationChannel(interaction.client, { id: treaty.initiator_id, notification_channel: null, last_tax_channel: null });
+    if (chan) {
+        try { await chan.send({ content: `✅ <@${treaty.initiator_id}> — Your **${treaty.treaty_type.replace(/[-_]/g, ' ')}** treaty with <@${interaction.user.id}> was **accepted**.` }); } catch (_) {}
+    }
+}
+
+async function handleTreatyReject(interaction, treatyId) {
+    const db = interaction.client.db;
+    const treaty = await db.get('SELECT * FROM treaties WHERE id=? AND partner_id=? AND status="pending"', treatyId, interaction.user.id);
+    if (!treaty) return interaction.reply({ content: '⚠️ This proposal is no longer valid.', ephemeral: true });
+
+    await db.run('UPDATE treaties SET status="broken" WHERE id=?', treatyId);
+    const emb = EmbedBuilder.from(interaction.message.embeds[0]).setColor(0xFF0000).setTitle('❌ TREATY REJECTED');
+    await interaction.update({ embeds: [emb], components: [], content: interaction.message.content });
+
+    const chan = await getNotificationChannel(interaction.client, { id: treaty.initiator_id, notification_channel: null, last_tax_channel: null });
+    if (chan) {
+        try { await chan.send({ content: `❌ <@${treaty.initiator_id}> — Your **${treaty.treaty_type.replace(/[-_]/g, ' ')}** treaty with <@${interaction.user.id}> was **rejected**.` }); } catch (_) {}
+    }
+}
+
+// Admin: dissolve a treaty
+async function handleTreatyDissolve(interaction) {
+    const db = interaction.client.db;
+    if (!await isGM(db, interaction.user.id)) return interaction.editReply({ content: 'Access Denied.' });
+    const initiatorId = interaction.options.getString('initiator');
+    const partnerId   = interaction.options.getString('partner');
+    const type        = interaction.options.getString('type');
+    const treaty = await db.get(
+        'SELECT * FROM treaties WHERE initiator_id=? AND partner_id=? AND treaty_type=? AND status="active"',
+        initiatorId, partnerId, type
+    );
+    if (!treaty) return interaction.editReply({ content: 'No active treaty found.' });
+    await db.run('UPDATE treaties SET status="broken" WHERE id=?', treaty.id);
+    for (const uid of [initiatorId, partnerId]) {
+        const chan = await getNotificationChannel(interaction.client, { id: uid, notification_channel: null, last_tax_channel: null });
+        if (chan) {
+            try { await chan.send({ content: `⚠️ <@${uid}> Your **${type}** treaty has been dissolved by the High Command.` }); } catch (_) {}
+        }
+    }
+    return interaction.editReply({ content: `⚖️ Treaty dissolved. Both parties notified.` });
+}
+
+async function handleWarMenu(interaction, userId) {
+    if (interaction.user.id !== userId) return interaction.reply({ content: '⚠️ Only the player who opened this ledger may use it.', ephemeral: true });
+    const emb = new EmbedBuilder()
+        .setTitle('⚔️ DECLARE WAR')
+        .setColor(0xFF0000)
+        .setDescription([
+            'Choose your form of attack:',
+            '',
+            '**Field Battle** — `/atlas action battle`',
+            'Open-field engagement. Dominars and Sovereigns may declare.',
+            '',
+            '**Siege** — `/atlas action warfare`',
+            'Lay siege to an enemy settlement. Sovereigns only.',
+            '',
+            '⚠️ War consumes food supplies and requires GM approval.',
+        ].join('\n'));
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`diplo_back_${userId}`).setLabel('← Back').setStyle(ButtonStyle.Secondary)
+    );
+    return interaction.editReply({ embeds: [emb], components: [row] });
+}
+
+// Button handler for diplomacy module
+async function handleButton(interaction, action, args) {
+    if (action === 'diplo') {
+        const sub = args[0];
+        const uid = args[1];
+        if (sub === 'treaties') { await interaction.deferUpdate(); return await handleViewTreaties(interaction, uid); }
+        if (sub === 'routes') { await interaction.deferUpdate(); return await handleViewRoutes(interaction, uid); }
+        if (sub === 'treaty') return await handleProposeTreaty(interaction, uid);
+        if (sub === 'treatyfinal') return await handleTreatyFinal(interaction, uid, args[2]);
+        if (sub === 'war') { await interaction.deferUpdate(); return await handleWarMenu(interaction, uid); }
+        if (sub === 'back') { await interaction.deferUpdate(); return await handleDiplomacy(interaction); }
+        if (sub === 'bribe') {
+            const bribeType = args[1];
+            const uid = args[2];
+            const idx = parseInt(args[3]);
+            const factionName = FACTIONS[idx];
+            if (!factionName) return interaction.reply({ content: '⚠️ Unknown faction.', ephemeral: true });
+            return await handleBribe(interaction, uid, factionName, bribeType);
+        }
+    }
+    if (action === 'treaty') {
+        const sub = args[0];
+        const tid = parseInt(args[1]);
+        if (isNaN(tid)) return interaction.reply({ content: '⚠️ Invalid treaty ID.', ephemeral: true });
+        if (sub === 'accept') return await handleTreatyAccept(interaction, tid);
+        if (sub === 'reject') return await handleTreatyReject(interaction, tid);
+    }
+}
+
+// Select menu handler
+async function handleSelect(interaction, action, args) {
+    if (action === 'diplo') {
+        const sub = args[0];
+        const uid = args[1];
+        if (sub === 'view') {
+            await interaction.deferUpdate();
+            return await handleFactionDetail(interaction, uid, interaction.values[0]);
+        }
+        if (sub === 'treatysel') {
+            return await handleTreatyTypeSelect(interaction, uid);
+        }
+    }
+}
+
+// Modal handler
+async function handleModal(interaction, action, args) {
+    if (action === 'diplo') {
+        const uid = args[1];
+        const treatyType = args[2];
+        return await handleTreatyModalSubmit(interaction, uid, treatyType);
+    }
+}
+
+module.exports = {
+    handleDiplomacy, handleButton, handleSelect, handleModal, handleTreatyDissolve
+};

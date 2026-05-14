@@ -6,8 +6,11 @@ module.exports = {
     once: true,
     async execute(client) {
         client.db = await setupDatabase();
+        const { initDB } = require('../utils/helpers');
+        await initDB(client.db);
+        
         require('../scheduler').initScheduler(client);
-        console.log(`[ATLAS] v1.0.3 ALPHA Systems Online.`);
+        console.log(`[ATLAS] v1.2.0 Systems Online.`);
 
         const path = require('path');
         const fs = require('fs');
