@@ -120,12 +120,12 @@ async function handleRecruit(interaction) {
     const userId = interaction.user.id;
     const user   = await db.get('SELECT * FROM users WHERE id = ?', userId);
 
-    // Mercenary: flat 500🪙 cost, no building requirement, expires weekly
+    // Mercenary: flat 500:coin: cost, no building requirement, expires weekly
     if (type === 'MERCENARY') {
         const cost = amount * 500;
-        if ((user.balance || 0) < cost) return interaction.editReply({ content: `⚠️ Insufficient Balance. Need **${cost} 🪙** to hire **${amount}** mercenaries.` });
+        if ((user.balance || 0) < cost) return interaction.editReply({ content: `⚠️ Insufficient Balance. Need **${cost} :coin:** to hire **${amount}** mercenaries.` });
         await db.run('UPDATE users SET balance=balance-?, mercs_temp=COALESCE(mercs_temp,0)+? WHERE id=?', cost, amount, userId);
-        return interaction.editReply({ content: `🗡️ Hired **${amount} mercenaries** for **${cost} 🪙**.\n\n*${MERC_DESC}*` });
+        return interaction.editReply({ content: `🗡️ Hired **${amount} mercenaries** for **${cost} :coin:**.\n\n*${MERC_DESC}*` });
     }
 
     const def = ARMY_TYPES[type];
@@ -148,7 +148,7 @@ async function handleRecruit(interaction) {
     // Balance cost
     const balCost = def.cost_balance * amount;
     if ((user.balance || 0) < balCost)
-        return interaction.editReply({ content: `⚠️ Insufficient Balance. Need **${balCost} 🪙** to recruit **${amount}** ${def.name}.` });
+        return interaction.editReply({ content: `⚠️ Insufficient Balance. Need **${balCost} :coin:** to recruit **${amount}** ${def.name}.` });
 
     // Population check (max 10% of commoners)
     const maxRecruits = Math.floor((user.pop_commoners || 0) * 0.10);
@@ -178,7 +178,7 @@ async function handleRecruit(interaction) {
     const discount = Math.min(0.30, strMod * 0.01);
     const dailyUpkeep = Math.floor(def.food_per_unit * amount * (1 - discount));
 
-    return interaction.editReply({ content: `⚔️ Recruited **${amount} ${def.name}** for **${balCost} 🪙**${metCost > 0 ? ` + **${metCost} 🔩**` : ''}.\nDaily food upkeep: **${dailyUpkeep} 🥩**${discount > 0 ? ` *(STR discount applied)*` : ''}.` });
+    return interaction.editReply({ content: `⚔️ Recruited **${amount} ${def.name}** for **${balCost} :coin:**${metCost > 0 ? ` + **${metCost} 🔩**` : ''}.\nDaily food upkeep: **${dailyUpkeep} 🥩**${discount > 0 ? ` *(STR discount applied)*` : ''}.` });
 }
 
 // ─── Nation founding ──────────────────────────────────────────────────────────

@@ -17,6 +17,9 @@ const FACTION_MECHANICS = {
     'Rhagaia':        { unlock: null, unlockText: '⚠️ Mechanic details pending lorebook confirmation.',  penalty: null, penaltyText: null },
     'Sellesela':      { unlock: null, unlockText: '⚠️ Mechanic details pending lorebook confirmation.',  penalty: null, penaltyText: null },
     'Gaius':          { unlock: null, unlockText: '⚠️ Mechanic details pending lorebook confirmation.',  penalty: null, penaltyText: null },
+    'Outer Being':    { unlock: null, unlockText: null, penalty: null, penaltyText: null },
+    'The Sisters':    { unlock: null, unlockText: null, penalty: null, penaltyText: null },
+    'The Warlocks':   { unlock: null, unlockText: null, penalty: null, penaltyText: null },
 };
 
 async function handleDiplomacy(interaction) {
@@ -32,17 +35,28 @@ async function handleDiplomacy(interaction) {
         const segs = Math.round(Math.min(10, Math.max(0, (score + 30) / 6)));
         const bar = '█'.repeat(segs) + '░'.repeat(10 - segs);
         let tag;
-        if (faction === 'Tyrannite' && score <= -20) tag = 'EMBARGOED 🚫';
-        else if (score >= 15) tag = 'Allied ✅';
+        if (faction === 'Tyrannite' && score <= -20) tag = 'EMBARGOED';
+        else if (score >= 15) tag = 'Allied';
         else if (score >= 0) tag = 'Neutral';
-        else if (score >= -10) tag = 'Strained ⚠️';
-        else tag = 'Hostile 🔴';
-        lines.push(`${faction}: ${bar} (${score > 0 ? '+' : ''}${score}) — ${tag}`);
+        else if (score >= -10) tag = 'Strained';
+        else tag = 'Hostile';
+        const scoreStr = `${score > 0 ? '+' : ''}${score}`.padStart(4);
+        const name = faction.padEnd(16).substring(0, 16);
+        lines.push(`\`${name} ${bar} ${scoreStr}  ${tag}\``);
     }
+
+    // Player's own treaties and trade routes summary
+    const treaties = await db.all("SELECT * FROM treaties WHERE (initiator_id=? OR partner_id=?) AND status='active'", userId, userId);
+    const routes = await db.all("SELECT * FROM trade_routes WHERE (initiator_id=? OR partner_id=?) AND status NOT IN ('completed','broken')", userId, userId);
+    const playerInfo = [];
+    if (treaties.length > 0) playerInfo.push(`📜 **${treaties.length}** active treaty(s)`);
+    else playerInfo.push('📜 No active treaties');
+    if (routes.length > 0) playerInfo.push(`🔄 **${routes.length}** active trade route(s)`);
+    else playerInfo.push('🔄 No trade routes');
 
     const embed = new EmbedBuilder()
         .setTitle('🤝 DIPLOMATIC LEDGER')
-        .setDescription(lines.join('\n'))
+        .setDescription(`${playerInfo.join('  |  ')}\n\n${lines.join('\n')}`)
         .setColor(0x00BFFF);
 
     const menu = new StringSelectMenuBuilder()
@@ -73,15 +87,15 @@ async function handleFactionDetail(interaction, userId, factionName) {
     const now = Date.now();
 
     let desc = `**Current Standing:** ${score > 0 ? '+' : ''}${score}`;
-    if (mech.unlock !== null) {
+    if (mech.unlock != null) {
         const unlocked = score >= mech.unlock;
-        desc += `\n\n🔓 **Unlock at ${mech.unlock > 0 ? '+' : ''}${mech.unlock}:** ${mech.unlockText} ${unlocked ? '✅' : '🔒'}`;
+        desc += `\n\n🔓 **Unlock at ${mech.unlock > 0 ? '+' : ''}${mech.unlock}:** ${mech.unlockText || ''} ${unlocked ? '✅' : '🔒'}`;
     }
-    if (mech.penalty !== null) {
+    if (mech.penalty != null) {
         const triggered = score <= mech.penalty;
-        desc += `\n\n⚠️ **Penalty at ${mech.penalty}:** ${mech.penaltyText} ${triggered ? '🔴 Active' : ''}`;
+        desc += `\n\n⚠️ **Penalty at ${mech.penalty}:** ${mech.penaltyText || ''} ${triggered ? '🔴 Active' : ''}`;
     }
-    if (mech.unlock === null && mech.penalty === null) {
+    if (mech.unlock == null && mech.penalty == null) {
         desc += `\n\n⚠️ *Mechanic details pending lorebook confirmation.*`;
     }
 
@@ -116,13 +130,13 @@ async function handleBribe(interaction, userId, factionName, type) {
     const now = Date.now();
 
     if (type === 'gold') {
-        if ((user.balance || 0) < 500) return interaction.reply({ content: '⚠️ Insufficient balance. Need 500 🪙.', ephemeral: true });
+        if ((user.balance || 0) < 500) return interaction.reply({ content: '⚠️ Insufficient balance. Need 500 :coin:.', ephemeral: true });
         await db.run('UPDATE users SET balance=balance-500 WHERE id=?', userId);
         await db.run(
             'INSERT INTO relations (user_id, faction_name, score, last_bribe) VALUES (?,?,COALESCE((SELECT score FROM relations WHERE user_id=? AND faction_name=?),0)+1,?) ON CONFLICT(user_id,faction_name) DO UPDATE SET score=score+1, last_bribe=?',
             userId, factionName, userId, factionName, now, now
         );
-        return interaction.update({ content: `✅ +1 relation with **${factionName}** for 500 🪙.` });
+        return interaction.update({ content: `✅ +1 relation with **${factionName}** for 500 :coin:.` });
     }
 
     if (type === 'exotic') {
@@ -139,7 +153,7 @@ async function handleBribe(interaction, userId, factionName, type) {
 async function handleViewTreaties(interaction, userId) {
     const db = interaction.client.db;
     const treaties = await db.all(
-        'SELECT * FROM treaties WHERE (initiator_id=? OR partner_id=?) AND status NOT IN ("completed","broken")',
+        "SELECT * FROM treaties WHERE (initiator_id=? OR partner_id=?) AND status NOT IN ('completed','broken')",
         userId, userId
     );
     if (!treaties.length) return interaction.editReply({ content: 'No active treaties. Use **Propose Treaty** to negotiate with another player.\n\n*Treaties are binding. Only an admin can dissolve them.*' });
@@ -159,7 +173,7 @@ async function handleViewTreaties(interaction, userId) {
 async function handleViewRoutes(interaction, userId) {
     const db = interaction.client.db;
     const routes = await db.all(
-        'SELECT * FROM trade_routes WHERE (initiator_id=? OR partner_id=?) AND status NOT IN ("completed","broken")',
+        "SELECT * FROM trade_routes WHERE (initiator_id=? OR partner_id=?) AND status NOT IN ('completed','broken')",
         userId, userId
     );
     if (!routes.length) return interaction.editReply({ content: 'No active trade routes. Use `/atlas traderoute propose` to create one.' });
@@ -228,12 +242,11 @@ async function handleTreatyFinal(interaction, userId, treatyType) {
 async function handleTreatyModalSubmit(interaction, userId, treatyType) {
     const db = interaction.client.db;
     const partnerId = interaction.fields.getTextInputValue('partner_id')?.trim();
-    await interaction.deferUpdate();
 
-    if (partnerId === userId) return interaction.editReply({ content: '⚠️ Cannot propose a treaty to yourself.' });
+    if (partnerId === userId) return interaction.reply({ content: '⚠️ Cannot propose a treaty to yourself.', ephemeral: true });
 
     const target = await db.get('SELECT id FROM users WHERE id=? AND status="active"', partnerId);
-    if (!target) return interaction.editReply({ content: '⚠️ Target player not found or not active.' });
+    if (!target) return interaction.reply({ content: '⚠️ Target player not found or not active.', ephemeral: true });
 
     const result = await db.run(
         'INSERT INTO treaties (initiator_id, partner_id, treaty_type, status) VALUES (?,?,?,"pending")',
@@ -254,7 +267,7 @@ async function handleTreatyModalSubmit(interaction, userId, treatyType) {
         try { await chan.send({ content: `<@${partnerId}>`, embeds: [emb], components: [row] }); } catch (_) {}
     }
 
-    return interaction.editReply({ content: `📨 Treaty proposal sent to <@${partnerId}>. Awaiting response.` });
+    return interaction.reply({ content: `📨 Treaty proposal sent to <@${partnerId}>. Awaiting response.`, ephemeral: true });
 }
 
 async function handleTreatyAccept(interaction, treatyId) {
@@ -277,7 +290,7 @@ async function handleTreatyReject(interaction, treatyId) {
     const treaty = await db.get('SELECT * FROM treaties WHERE id=? AND partner_id=? AND status="pending"', treatyId, interaction.user.id);
     if (!treaty) return interaction.reply({ content: '⚠️ This proposal is no longer valid.', ephemeral: true });
 
-    await db.run('UPDATE treaties SET status="broken" WHERE id=?', treatyId);
+    await db.run(`UPDATE treaties SET status='broken' WHERE id=?`, treatyId);
     const emb = EmbedBuilder.from(interaction.message.embeds[0]).setColor(0xFF0000).setTitle('❌ TREATY REJECTED');
     await interaction.update({ embeds: [emb], components: [], content: interaction.message.content });
 
@@ -299,7 +312,7 @@ async function handleTreatyDissolve(interaction) {
         initiatorId, partnerId, type
     );
     if (!treaty) return interaction.editReply({ content: 'No active treaty found.' });
-    await db.run('UPDATE treaties SET status="broken" WHERE id=?', treaty.id);
+    await db.run(`UPDATE treaties SET status='broken' WHERE id=?`, treaty.id);
     for (const uid of [initiatorId, partnerId]) {
         const chan = await getNotificationChannel(interaction.client, { id: uid, notification_channel: null, last_tax_channel: null });
         if (chan) {

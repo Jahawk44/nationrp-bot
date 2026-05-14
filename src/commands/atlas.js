@@ -18,7 +18,7 @@ module.exports = {
         .setDescription('Atlas AI: Imperial Interface')
         .addSubcommand(s => s.setName('begin').setDescription('Start your Imperial Origins.'))
         .addSubcommand(s => s.setName('tax').setDescription('Daily tax collection cycle.'))
-        .addSubcommand(s => s.setName('donate').setDescription('Donate Balance (🪙) to National Wealth (⚖️).').addIntegerOption(o => o.setName('amount').setDescription('Amount of Wealth to buy (1 ⚖️ = 1,000 🪙).').setRequired(true)))
+        .addSubcommand(s => s.setName('donate').setDescription('Donate Balance (:coin:) to National Wealth (⚖️).').addIntegerOption(o => o.setName('amount').setDescription('Amount of Wealth to buy (1 ⚖️ = 1,000 :coin:).').setRequired(true)))
         .addSubcommand(s => s.setName('gift').setDescription('Gift a resource to another player.')
             .addStringOption(o => o.setName('target').setDescription('Target Player').setRequired(true).setAutocomplete(true))
             .addStringOption(o => o.setName('resource').setDescription('Resource to gift').setRequired(true).addChoices(
@@ -39,7 +39,6 @@ module.exports = {
             ))
         )
         .addSubcommand(s => s.setName('profile').setDescription('Inspect player lineage.').addStringOption(o => o.setName('user').setDescription('Player').setRequired(false).setAutocomplete(true)))
-        .addSubcommand(s => s.setName('relation').setDescription('Diplomatic standings ledger.'))
         .addSubcommand(s => s.setName('diplomacy').setDescription('Diplomatic ledger with faction details and treaties.'))
         .addSubcommand(s => s.setName('empire').setDescription('Imperial status and Vitale market.'))
         .addSubcommand(s => s.setName('town').setDescription('Open the Town Management dashboard.'))
@@ -64,6 +63,10 @@ module.exports = {
             .addSubcommand(s => s.setName('warfare').setDescription('Lay siege to an enemy settlement (Sovereign only).')
                 .addStringOption(o => o.setName('user').setDescription('Target Player').setRequired(true).setAutocomplete(true))
                 .addStringOption(o => o.setName('target_town').setDescription('Name of the target town').setRequired(true).setAutocomplete(true))
+            )
+            .addSubcommand(s => s.setName('raid').setDescription('Launch a raid on another player.')
+                .addStringOption(o => o.setName('user').setDescription('Target Player').setRequired(true).setAutocomplete(true))
+                .addStringOption(o => o.setName('town').setDescription('Target town (optional)').setRequired(false).setAutocomplete(true))
             )
         )
         .addSubcommand(s => s.setName('roll').setDescription('Open the Dice Oracle GUI.'))
@@ -134,6 +137,22 @@ module.exports = {
             return await interaction.editReply({ content: statusMsg });
         }
 
+        // Check if defender is locked in a pending battle
+        if (user.pending_battle && sub !== 'diplomacy' && sub !== 'begin') {
+            const parts = user.pending_battle.split('|');
+            const atkId = parts[0];
+            const atkComp = parts[1] || '';
+            const battleName = parts.length >= 3 ? (parts[2] || '').replace(/-/g, ' ') : 'Battle';
+            const emb = new EmbedBuilder()
+                .setTitle(`⚔️ ${battleName} — COMMIT YOUR FORCES`)
+                .setColor(0xFF0000)
+                .setDescription(`<@${atkId}> is marching on you! You must commit forces before taking any other action.\n\nUse the button below or \`/atlas diplomacy\` to respond.`);
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(`wardefcommit_${atkId}_${interaction.user.id}_${atkComp}`).setLabel('⚔️ Commit Forces').setStyle(ButtonStyle.Danger)
+            );
+            return interaction.editReply({ embeds: [emb], components: [row] });
+        }
+
         if (sub === 'town') {
             const towns = await db.all('SELECT id FROM towns WHERE user_id = ?', interaction.user.id);
             if (towns.length === 0) {
@@ -143,7 +162,6 @@ module.exports = {
 
         if (sub === 'leaderboard') return await leaderboard.handleLeaderboard(interaction);
         if (sub === 'profile') return await character.handleProfile(interaction);
-        if (sub === 'relation') return await character.handleRelation(interaction);
         if (sub === 'diplomacy') {
             if (interaction.replied || interaction.deferred) {} else await interaction.deferReply({ ephemeral: true });
             return await diplomacy.handleDiplomacy(interaction);
@@ -161,6 +179,7 @@ module.exports = {
         if (group === 'action' && sub === 'recruit') return await actionMod.handleRecruit(interaction);
         if (group === 'action' && sub === 'battle') return await warfare.handleBattleInitiate(interaction);
         if (group === 'action' && sub === 'warfare') return await warfare.handleSiegeInitiate(interaction);
+        if (group === 'action' && sub === 'raid') return await warfare.handleRaidInitiate(interaction);
         if (group === 'nation' && sub === 'found') return await actionMod.handleNationFound(interaction);
         if (sub === 'roll') return await actionMod.handleUserRoll(interaction);
         if (group === 'gm' && sub === 'roll') return await actionMod.handleGMRoll(interaction);
@@ -179,7 +198,7 @@ module.exports = {
         if (action === 'roll') {
             return await actionMod.handleButton(interaction, action, args);
         }
-        if (action === 'vitale' || action === 'ta' || action === 'td') {
+        if (action === 'vitale' || action === 'ta' || action === 'td' || action.startsWith('tmodal') || action === 'empire') {
             return await economy.handleButton(interaction, action, args);
         }
         if (action === 'rebellion' || action === 'revolt') {
@@ -201,7 +220,10 @@ module.exports = {
         if (action === 'treaty') {
             return await diplomacy.handleButton(interaction, action, args);
         }
-        if (action.startsWith('war') || action === 'warbattle' || action === 'warsiege') {
+        if (action.startsWith('war') || action === 'warbattle' || action === 'warsiege' || action === 'wardefcommit' || action === 'warraid') {
+            return await warfare.handleButton(interaction, action, args);
+        }
+        if (action === 'raidwithdraw') {
             return await warfare.handleButton(interaction, action, args);
         }
     },
@@ -222,8 +244,24 @@ module.exports = {
         if (action === 'tmodalg' || action === 'tmodalr') {
             return await economy.handleModal(interaction, action, args);
         }
+        if (action === 'empire') {
+            return await economy.handleModal(interaction, action, args);
+        }
         if (action === 'diplo') {
             return await diplomacy.handleModal(interaction, action, args);
+        }
+        if (action === 'warcomp') {
+            return await warfare.handleBattleCompositionSubmit(interaction, args[0], args[1]);
+        }
+        if (action === 'wardefmodal') {
+            return await warfare.handleBattleResolve(interaction, args[0], args[1], args[2]);
+        }
+        if (action === 'warbattlename') {
+            return await warfare.handleBattleNameSubmit(interaction, args[0], args[1], args.slice(2));
+        }
+        if (action === 'warraid') {
+            const townEnc = args.length > 2 ? args.slice(2).join('_') : null;
+            return await warfare.handleRaidCompositionSubmit(interaction, args[0], args[1], townEnc);
         }
     },
 

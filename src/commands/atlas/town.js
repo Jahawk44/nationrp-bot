@@ -89,12 +89,30 @@ async function handleButton(interaction, action, args) {
             let plotsUsed = bldgs.reduce((s, b) => s + (BUILDINGS[b.type.toUpperCase()]?.plots || 1), 0);
             const remaining = town.plots_total - plotsUsed;
             const user = await db.get('SELECT wealth FROM users WHERE id = ?', interaction.user.id);
-            const available = Object.entries(BUILDINGS).filter(([k, b]) => b.tier === 1 && b.plots <= remaining && (user.wealth || 0) >= b.cost);
+            const userWealth = user.wealth || 0;
+
+            // Tier 1 buildings that fit in plots
+            const fitsPlots = Object.entries(BUILDINGS).filter(([k, b]) => b.tier === 1 && b.plots <= remaining);
+            const affordable = fitsPlots.filter(([k, b]) => userWealth >= b.cost);
+
+            if (fitsPlots.length === 0) {
+                return interaction.editReply({
+                    embeds: [new EmbedBuilder().setTitle('🔨 BUILD STRUCTURE').setColor(0xFF0000)
+                        .setDescription(`⚠️ **No plots remaining!**\n\n${town.name}: **${remaining}** plots left. Demolish a structure or settle a new town.\nYour Wealth: **${userWealth} ⚖️**`)],
+                    components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`town_back_${townId}`).setLabel('← Back').setStyle(ButtonStyle.Secondary))]
+                });
+            }
+            if (affordable.length === 0) {
+                const cheapest = fitsPlots.reduce((min, [k, b]) => b.cost < min.cost ? b : min, fitsPlots[0][1]);
+                return interaction.editReply({
+                    embeds: [new EmbedBuilder().setTitle('🔨 BUILD STRUCTURE').setColor(0xFF0000)
+                        .setDescription(`⚠️ **Insufficient Wealth!**\n\nCheapest structure: **${cheapest.name}** (${cheapest.cost} ⚖️)\nYour Wealth: **${userWealth} ⚖️**\nPlots: **${remaining}** remaining`)],
+                    components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`town_back_${townId}`).setLabel('← Back').setStyle(ButtonStyle.Secondary))]
+                });
+            }
             
-            if (!available.length) return interaction.editReply({ embeds: [new EmbedBuilder().setTitle('🔨 BUILD STRUCTURE').setColor(0xFF0000).setDescription('⚠️ No buildable structures fit in your remaining plots or meet tier/wealth requirements.')], components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`town_back_${townId}`).setLabel('← Back').setStyle(ButtonStyle.Secondary))] });
-            
-            const menu = new StringSelectMenuBuilder().setCustomId(`town_buildsel_${townId}`).setPlaceholder('Select a structure...').addOptions(available.slice(0, 25).map(([k, b]) => ({ label: `${b.name} (${b.cost}⚖️, ${b.plots} plots)`, description: b.desc.substring(0, 50), value: k, emoji: b.emoji || '🏗️' })));
-            return interaction.editReply({ embeds: [new EmbedBuilder().setTitle('🔨 BUILD STRUCTURE').setColor(0x00BFFF).setDescription(`**${town.name}** — ${remaining} plots remaining\nYour Wealth: **${user.wealth || 0} ⚖️**`)], components: [new ActionRowBuilder().addComponents(menu), new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`town_back_${townId}`).setLabel('← Back').setStyle(ButtonStyle.Secondary))] });
+            const menu = new StringSelectMenuBuilder().setCustomId(`town_buildsel_${townId}`).setPlaceholder('Select a structure...').addOptions(affordable.slice(0, 25).map(([k, b]) => ({ label: `${b.name} (${b.cost}⚖️, ${b.plots} plots)`, description: b.desc.substring(0, 50), value: k, emoji: b.emoji || '🏗️' })));
+            return interaction.editReply({ embeds: [new EmbedBuilder().setTitle('🔨 BUILD STRUCTURE').setColor(0x00BFFF).setDescription(`**${town.name}** — ${remaining} plots remaining\nYour Wealth: **${userWealth} ⚖️**`)], components: [new ActionRowBuilder().addComponents(menu), new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`town_back_${townId}`).setLabel('← Back').setStyle(ButtonStyle.Secondary))] });
         }
 
         if (sub === 'upgrademenu') {
@@ -147,8 +165,27 @@ async function handleButton(interaction, action, args) {
         const [townId, bType] = args;
         await interaction.deferUpdate();
         const bData = BUILDINGS[bType];
+        if (!bData || !bData.upgrade_from) return interaction.editReply({ content: '⚠️ Invalid upgrade.', components: [] });
+
+        // Check plot space
+        const town = await db.get('SELECT * FROM towns WHERE id=?', townId);
+        const bldgs = await db.get('SELECT COUNT(*) as cnt FROM buildings WHERE town_id=?', townId);
+        const oldPlots = BUILDINGS[bData.upgrade_from]?.plots || 0;
+        const newPlots = bData.plots || 0;
+        if (town && town.plots_total) {
+            // Estimate: since we can't easily sum all plots, just check the new building doesn't exceed
+            // Better: count all buildings and their plots
+            const allBldgs = await db.all('SELECT type FROM buildings WHERE town_id=?', townId);
+            let plotsUsed = 0;
+            for (const b of allBldgs) {
+                plotsUsed += (BUILDINGS[b.type.toUpperCase()]?.plots || 1);
+            }
+            if (plotsUsed - oldPlots + newPlots > town.plots_total) {
+                return interaction.editReply({ content: `⚠️ Not enough plots. Need ${newPlots - oldPlots} more.`, components: [] });
+            }
+        }
+
         await db.run('UPDATE users SET wealth = wealth - ? WHERE id = ?', bData.cost, interaction.user.id);
-        // Delete only ONE row of the base type to avoid removing duplicates
         await db.run(
             'DELETE FROM buildings WHERE rowid = (SELECT rowid FROM buildings WHERE town_id = ? AND type = ? LIMIT 1)',
             townId, bData.upgrade_from.toLowerCase()
@@ -183,7 +220,7 @@ async function handleModal(interaction, action, args) {
         await interaction.deferUpdate();
 
         const user = await db.get('SELECT balance FROM users WHERE id=?', interaction.user.id);
-        if ((user.balance || 0) < 1000) return interaction.editReply({ content: '⚠️ Renaming costs **1,000 🪙**.' });
+        if ((user.balance || 0) < 1000) return interaction.editReply({ content: '⚠️ Renaming costs **1,000 :coin:**.' });
 
         const check = await db.get('SELECT id FROM towns WHERE user_id=? AND LOWER(name)=?', interaction.user.id, newName.toLowerCase());
         if (check) return interaction.editReply({ content: '⚠️ You already have a town with that name.' });
@@ -209,7 +246,7 @@ async function handleModal(interaction, action, args) {
         const terrainKeys = Object.keys(TERRAINS);
         const tType = terrainKeys[Math.floor(Math.random() * terrainKeys.length)];
         const maxPlots = TERRAINS[tType].plots || 10;
-        const plots = Math.floor(Math.random() * (maxPlots - (maxPlots - 4) + 1)) + (maxPlots - 4);
+        const plots = Math.floor(Math.random() * 61) + 25; // 25–85
         const fert = Math.floor(Math.random() * 81) + 20;
 
         if (cost > 0) await db.run('UPDATE users SET wealth = wealth - ? WHERE id = ?', cost, interaction.user.id);

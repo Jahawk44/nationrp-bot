@@ -290,6 +290,7 @@ async function initDB(db) {
         'ALTER TABLE users ADD COLUMN mil_ranged INTEGER DEFAULT 0',
         'ALTER TABLE users ADD COLUMN mil_siege INTEGER DEFAULT 0',
         'ALTER TABLE users ADD COLUMN hp_current INTEGER DEFAULT 10',
+        'ALTER TABLE users ADD COLUMN pending_battle TEXT DEFAULT NULL',
     ];
 
     // Create tables that don't exist yet

@@ -11,7 +11,7 @@ const NPC_TEXTS = {
 async function handleTradeRouteList(interaction) {
     const db = interaction.client.db;
     const routes = await db.all(
-        'SELECT * FROM trade_routes WHERE (initiator_id=? OR partner_id=?) AND status NOT IN ("completed","broken")',
+        "SELECT * FROM trade_routes WHERE (initiator_id=? OR partner_id=?) AND status NOT IN ('completed','broken')",
         interaction.user.id, interaction.user.id
     );
     if (!routes.length) return interaction.editReply({ content: 'You have no active trade routes. Use `/atlas traderoute propose` to create one.' });
@@ -56,12 +56,12 @@ async function handleTradeRoutePropose(interaction) {
     if (partnerType === 'player') {
         if (!partnerId) return interaction.editReply({ content: '⚠️ A partner player is required for player routes.' });
         if (partnerId === interaction.user.id) return interaction.editReply({ content: '⚠️ Cannot trade with yourself.' });
-        const target = await db.get('SELECT id FROM users WHERE id=? AND status="active"', partnerId);
+        const target = await db.get(`SELECT id FROM users WHERE id=? AND status='active'`, partnerId);
         if (!target) return interaction.editReply({ content: '⚠️ Target player not found or not active.' });
 
         const result = await db.run(
-            'INSERT INTO trade_routes (initiator_id, partner_id, partner_type, give_resource, give_amount, receive_resource, receive_amount, duration_turns, turns_remaining, status) VALUES (?,?,?,?,?,?,?,?,?,"pending")',
-            interaction.user.id, partnerId, partnerType, giveRes, giveAmt, recvRes, recvAmt, duration, duration
+            'INSERT INTO trade_routes (initiator_id, partner_id, partner_type, give_resource, give_amount, receive_resource, receive_amount, duration_turns, turns_remaining, status) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            interaction.user.id, partnerId, partnerType, giveRes, giveAmt, recvRes, recvAmt, duration, duration, 'pending'
         );
         const routeId = result.lastID;
 
@@ -82,8 +82,8 @@ async function handleTradeRoutePropose(interaction) {
 
     // NPC routes: insert active directly
     await db.run(
-        'INSERT INTO trade_routes (initiator_id, partner_id, partner_type, give_resource, give_amount, receive_resource, receive_amount, duration_turns, turns_remaining, status) VALUES (?,NULL,?,?,?,?,?,?,?,"active")',
-        interaction.user.id, partnerType, giveRes, giveAmt, recvRes, recvAmt, duration, duration
+        'INSERT INTO trade_routes (initiator_id, partner_id, partner_type, give_resource, give_amount, receive_resource, receive_amount, duration_turns, turns_remaining, status) VALUES (?,NULL,?,?,?,?,?,?,?,?)',
+        interaction.user.id, partnerType, giveRes, giveAmt, recvRes, recvAmt, duration, duration, 'active'
     );
     return interaction.editReply({ content: `✅ Trade route established with **${partnerType}**: Give ${giveAmt} ${giveRes} → Receive ${recvAmt} ${recvRes} for ${duration} turns.` });
 }
@@ -95,16 +95,16 @@ async function handleTradeRouteCancel(interaction, routeId) {
     if (route.status === 'tribute') return interaction.editReply({ content: '⚠️ War tributes cannot be cancelled.' });
     if (route.status === 'completed') return interaction.editReply({ content: '⚠️ This route has already completed.' });
 
-    await db.run('UPDATE trade_routes SET status="broken" WHERE id=?', routeId);
+    await db.run(`UPDATE trade_routes SET status='broken' WHERE id=?`, routeId);
     return interaction.editReply({ content: `❌ Trade route #${routeId} cancelled.` });
 }
 
 async function handleRouteAccept(interaction, routeId) {
     const db = interaction.client.db;
-    const route = await db.get('SELECT * FROM trade_routes WHERE id=? AND partner_id=? AND status="pending"', routeId, interaction.user.id);
+    const route = await db.get(        `SELECT * FROM trade_routes WHERE id=? AND partner_id=? AND status='pending'`, routeId, interaction.user.id);
     if (!route) return interaction.reply({ content: '⚠️ This proposal is no longer valid.', ephemeral: true });
 
-    await db.run('UPDATE trade_routes SET status="active" WHERE id=?', routeId);
+    await db.run(`UPDATE trade_routes SET status='active' WHERE id=?`, routeId);
 
     const emb = EmbedBuilder.from(interaction.message.embeds[0]).setColor(0x00FF88).setTitle('🤝 TRADE ROUTE ACCEPTED');
     await interaction.update({ embeds: [emb], components: [], content: interaction.message.content });
@@ -117,10 +117,10 @@ async function handleRouteAccept(interaction, routeId) {
 
 async function handleRouteReject(interaction, routeId) {
     const db = interaction.client.db;
-    const route = await db.get('SELECT * FROM trade_routes WHERE id=? AND partner_id=? AND status="pending"', routeId, interaction.user.id);
+    const route = await db.get(        `SELECT * FROM trade_routes WHERE id=? AND partner_id=? AND status='pending'`, routeId, interaction.user.id);
     if (!route) return interaction.reply({ content: '⚠️ This proposal is no longer valid.', ephemeral: true });
 
-    await db.run('UPDATE trade_routes SET status="broken" WHERE id=?', routeId);
+    await db.run(`UPDATE trade_routes SET status='broken' WHERE id=?`, routeId);
 
     const emb = EmbedBuilder.from(interaction.message.embeds[0]).setColor(0xFF0000).setTitle('❌ TRADE ROUTE REJECTED');
     await interaction.update({ embeds: [emb], components: [], content: interaction.message.content });
@@ -133,7 +133,7 @@ async function handleRouteReject(interaction, routeId) {
 
 // Weekly route resolution — called from scheduler.js
 async function processTradeRoutes(db, client) {
-    const routes = await db.all('SELECT * FROM trade_routes WHERE status IN ("active","tribute")');
+    const routes = await db.all(`SELECT * FROM trade_routes WHERE status IN ('active','tribute')`);
     for (const route of routes) {
         try {
             const user = await db.get('SELECT * FROM users WHERE id=?', route.initiator_id);
@@ -141,7 +141,7 @@ async function processTradeRoutes(db, client) {
 
             // Check can pay
             if ((user[route.give_resource] || 0) < route.give_amount) {
-                await db.run('UPDATE trade_routes SET status="paused" WHERE id=?', route.id);
+                await db.run(`UPDATE trade_routes SET status='paused' WHERE id=?`, route.id);
                 const chan = await getNotificationChannel(client, user);
                 if (chan) await chan.send({ content: `⚠️ <@${route.initiator_id}> Your trade route paused — insufficient ${route.give_resource}.` });
                 continue;
@@ -151,9 +151,9 @@ async function processTradeRoutes(db, client) {
 
             // Styx: dynamic Vitale pricing at resolution
             if (route.partner_type === 'styx') {
-                const vBase  = parseInt((await db.get('SELECT value FROM global_settings WHERE key="vitale_base"'))?.value || '15');
-                const vSold  = parseInt((await db.get('SELECT value FROM global_settings WHERE key="vitale_sold_week"'))?.value || '0');
-                const pCount = (await db.get('SELECT COUNT(*) as c FROM users WHERE status="active"'))?.c || 1;
+                const vBase  = parseInt((await db.get(`SELECT value FROM global_settings WHERE key='vitale_base'`))?.value || '15');
+                const vSold  = parseInt((await db.get(`SELECT value FROM global_settings WHERE key='vitale_sold_week'`))?.value || '0');
+                const pCount = (await db.get(`SELECT COUNT(*) as c FROM users WHERE status='active'`))?.c || 1;
                 const pool   = vBase + (10 * pCount);
                 const price  = Math.floor(50 * (1 + (vSold / Math.max(1, pool)) * 4));
                 receiveAmount = Math.floor(route.give_amount / price);
@@ -162,7 +162,7 @@ async function processTradeRoutes(db, client) {
                     if (chan) await chan.send({ content: `⚠️ <@${route.initiator_id}> Vitale price too high this week — Styx route skipped.` });
                     continue;
                 }
-                await db.run('UPDATE global_settings SET value=CAST(value AS INTEGER)+? WHERE key="vitale_sold_week"', receiveAmount);
+                await db.run(`UPDATE global_settings SET value=CAST(value AS INTEGER)+? WHERE key='vitale_sold_week'`, receiveAmount);
             }
 
             // Execute exchange
@@ -184,7 +184,7 @@ async function processTradeRoutes(db, client) {
             // Decrement turns
             await db.run('UPDATE trade_routes SET turns_remaining=turns_remaining-1 WHERE id=?', route.id);
             if (route.turns_remaining - 1 <= 0) {
-                await db.run('UPDATE trade_routes SET status="completed" WHERE id=?', route.id);
+                await db.run("UPDATE trade_routes SET status='completed' WHERE id=?", route.id);
                 const chan = await getNotificationChannel(client, user);
                 if (chan) await chan.send({ content: `✅ <@${route.initiator_id}> Your trade route #${route.id} has completed after ${route.duration_turns} turns.` });
             }
@@ -200,11 +200,11 @@ async function handleTreatyDissolve(db, interaction) {
     const partnerId   = interaction.options.getString('partner');
     const type        = interaction.options.getString('type');
     const treaty = await db.get(
-        'SELECT * FROM treaties WHERE initiator_id=? AND partner_id=? AND treaty_type=? AND status="active"',
+        `SELECT * FROM treaties WHERE initiator_id=? AND partner_id=? AND treaty_type=? AND status='active'`,
         initiatorId, partnerId, type
     );
     if (!treaty) return interaction.editReply({ content: 'No active treaty found matching those parameters.' });
-    await db.run('UPDATE treaties SET status="broken" WHERE id=?', treaty.id);
+    await db.run(`UPDATE treaties SET status='broken' WHERE id=?`, treaty.id);
     // Notify both parties
     for (const uid of [initiatorId, partnerId]) {
         const chan = await getNotificationChannel(interaction.client, { id: uid, notification_channel: null, last_tax_channel: null });

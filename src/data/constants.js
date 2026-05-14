@@ -2,7 +2,7 @@ const { ButtonStyle } = require('discord.js');
 
 const EMOJIS = {
     wealth: '⚖️', food: '🥩', ores: '⚒️', vitale: '💧', exotics: '🍷',
-    balance: '🪙', servus: '🔗', metallurgy: '🔩',
+    balance: ':coin:', servus: '🔗', metallurgy: '🔩',
     str: '💪', mot: '🏃', men: '💀', int: '🧠', wis: '🕯️', cha: '🎭'
 };
 
@@ -123,7 +123,7 @@ const STAT_MAPPING = {
 };
 
 const RESOURCES = {
-    GOLD:         { name: 'Balance',     emoji: '🪙' },
+    GOLD:         { name: 'Balance',     emoji: ':coin:' },
     WEALTH:       { name: 'Wealth',      emoji: '⚖️' },
     EXOTICS:      { name: 'Exotics',     emoji: '🍷' },
     FOOD:         { name: 'Food',        emoji: '🥩' },

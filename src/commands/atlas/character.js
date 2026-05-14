@@ -322,7 +322,7 @@ async function handleProfile(interaction) {
         .setTitle('📜 IMPERIAL CREDENTIALS')
         .setColor(houseData?.color || 0xFFD700)
         .setDescription(descLines)
-        .setThumbnail(user.avatar_url || null);
+        .setThumbnail(user.avatar_url || interaction.client.users.cache.get(targetId)?.displayAvatarURL({ size: 256 }) || null);
 
     return interaction.editReply({ embeds: [embed] });
 }
