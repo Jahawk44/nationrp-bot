@@ -147,14 +147,28 @@ const STAT_KEYS = {
 
 // ─── ARMY TYPES ────────────────────────────────────────────────────────────────
 const ARMY_TYPES = {
-    INFANTRY: { name: 'Infantry', emoji: '⚔️', cost_balance: 50,  cost_met: 0,
-                food_per_unit: 1, requires: null,       field_mult: 1.0, siege_atk_mult: 1.0, siege_def_mult: 1.0 },
-    CAVALRY:  { name: 'Cavalry',  emoji: '🐎', cost_balance: 150, cost_met: 0,
-                food_per_unit: 2, requires: 'BARRACKS', field_mult: 1.5, siege_atk_mult: 0.8, siege_def_mult: 0.8 },
-    RANGED:   { name: 'Ranged',   emoji: '🏹', cost_balance: 80,  cost_met: 0,
-                food_per_unit: 1, requires: 'BARRACKS', field_mult: 1.0, siege_atk_mult: 1.0, siege_def_mult: 1.2 },
-    SIEGE:    { name: 'Siege',    emoji: '🪨', cost_balance: 500, cost_met: 5,
-                food_per_unit: 3, requires: 'CASTLE',  field_mult: 0.0, siege_atk_mult: 2.0, siege_def_mult: 0.5 }
+    MILITIA:   { name: 'Militiamen',  emoji: '🧑', cost_balance: 20,  cost_met: 0,
+                 food_per_unit: 1, requires: null,       field_mult: 0.6, siege_atk_mult: 0.5, siege_def_mult: 0.5, morale_penalty: true },
+    SPEARMEN:  { name: 'Spearmen',   emoji: '🔱', cost_balance: 60,  cost_met: 0,
+                 food_per_unit: 1, requires: 'BARRACKS', field_mult: 1.0, siege_atk_mult: 0.7, siege_def_mult: 1.0, anti_cavalry: true },
+    SWORDSMAN: { name: 'Swordsman',  emoji: '⚔️', cost_balance: 100, cost_met: 0,
+                 food_per_unit: 1, requires: 'BARRACKS', field_mult: 1.2, siege_atk_mult: 1.5, siege_def_mult: 0.8 },
+    SHIELD:    { name: 'Shield Inf.', emoji: '🛡️', cost_balance: 80,  cost_met: 0,
+                 food_per_unit: 1, requires: 'BARRACKS', field_mult: 0.9, siege_atk_mult: 0.8, siege_def_mult: 1.5, defensive: true },
+    CAVALRY:   { name: 'Cavalry',    emoji: '🐎', cost_balance: 150, cost_met: 0,
+                 food_per_unit: 2, requires: 'BARRACKS', field_mult: 1.5, siege_atk_mult: 0.8, siege_def_mult: 0.8 },
+    RANGED:    { name: 'Ranged',     emoji: '🏹', cost_balance: 80,  cost_met: 0,
+                 food_per_unit: 1, requires: 'BARRACKS', field_mult: 1.0, siege_atk_mult: 1.0, siege_def_mult: 1.2 },
+    SIEGE:     { name: 'Siege',      emoji: '🪨', cost_balance: 500, cost_met: 5,
+                 food_per_unit: 3, requires: 'CASTLE',  field_mult: 0.0, siege_atk_mult: 2.0, siege_def_mult: 0.5 }
+};
+
+const FORMATIONS = {
+    SHIELD_WALL: { name: 'Shield Wall', type: 'defensive', preview: '🛡️⚔️🛡️⚔️🛡️\n⚔️🛡️⚔️🛡️⚔️', bonus: '+20% defense', atkMod: 0, defMod: 1.20, counter: 'WEDGE', counteredBy: 'FLANKING' },
+    WEDGE:       { name: 'Wedge',       type: 'offensive', preview: '..⚔️..\n.⚔️⚔️.\n⚔️⚔️⚔️', bonus: '+15% attack', atkMod: 1.15, defMod: 1.0, counter: 'LINK', counteredBy: 'SHIELD_WALL' },
+    LINE:        { name: 'Line',        type: 'balanced',  preview: '⚔️⚔️⚔️⚔️⚔️', bonus: '+10% vs Wedge', atkMod: 1.0, defMod: 1.0, counter: 'WEDGE', counteredBy: null },
+    SCHILTRON:   { name: 'Schiltron',   type: 'anti-cav',  preview: '🔱⚔️🔱\n🛡️.🛡️\n🔱⚔️🔱', bonus: '+25% def vs Cavalry', atkMod: 1.0, defMod: 1.25, antiCav: true, counteredBy: null },
+    FLANKING:    { name: 'Flanking',    type: 'maneuver',  preview: '🐎⚔️⚔️⚔️⚔️🐎', bonus: '+15% atk, +20% Cav', atkMod: 1.15, defMod: 1.0, cavBonus: 1.20, counter: 'SHIELD_WALL', counteredBy: 'SCHILTRON' },
 };
 
 const MERC_DESC = 'Soldiers-for-hire drawn from various lands and backgrounds, bound by coin rather than loyalty. They fight effectively but disband at the end of each Imperial turn.';
@@ -175,5 +189,6 @@ module.exports = {
     FACTIONS,
     STAT_KEYS,
     ARMY_TYPES,
+    FORMATIONS,
     MERC_DESC
 };

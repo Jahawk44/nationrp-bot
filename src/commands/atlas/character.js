@@ -328,7 +328,7 @@ async function handleProfile(interaction) {
 }
 
 async function handleRelation(interaction) {
-    return interaction.editReply({ content: 'Diplomatic relations feature coming soon.' });
+    return interaction.editReply({ content: 'ℹ️ The `/atlas relation` command has been replaced by `/atlas diplomacy` — use that to view faction standings, treaties, and trade routes.', ephemeral: true });
 }
 
 module.exports = {

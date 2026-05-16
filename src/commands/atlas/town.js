@@ -152,7 +152,8 @@ async function handleButton(interaction, action, args) {
     }
 
     if (action === 'buildconfirm') {
-        const [townId, bType] = args;
+        const townId = args[0];
+        const bType = args.slice(1).join('_');
         await interaction.deferUpdate();
         const bData = BUILDINGS[bType];
         await db.run('UPDATE users SET wealth = wealth - ? WHERE id = ?', bData.cost, interaction.user.id);
@@ -162,7 +163,8 @@ async function handleButton(interaction, action, args) {
     }
     
     if (action === 'upgradeconfirm') {
-        const [townId, bType] = args;
+        const townId = args[0];
+        const bType = args.slice(1).join('_');
         await interaction.deferUpdate();
         const bData = BUILDINGS[bType];
         if (!bData || !bData.upgrade_from) return interaction.editReply({ content: '⚠️ Invalid upgrade.', components: [] });
@@ -196,7 +198,8 @@ async function handleButton(interaction, action, args) {
     }
     
     if (action === 'demolishconfirm') {
-        const [townId, bType] = args;
+        const townId = args[0];
+        const bType = args.slice(1).join('_');
         await interaction.deferUpdate();
         const bData = BUILDINGS[bType.toUpperCase()];
         const refund = Math.floor((bData?.cost || 0) * 0.5);

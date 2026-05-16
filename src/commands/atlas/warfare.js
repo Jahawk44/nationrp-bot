@@ -1,6 +1,6 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const { ANCESTRIES, BUILDINGS, STAT_MAPPING, STAT_KEYS, TERRAINS } = require('../../data/constants');
-const { getMod, getPlayerRank, resolveAtlasHQ, getNotificationChannel, isGM, calcMaintenance } = require('../../utils/helpers');
+const { getMod, getPlayerRank, resolveAtlasHQ, getNotificationChannel, isGM, calcMaintenance, sendToPlayer } = require('../../utils/helpers');
 const { generateBattleName, classifyBattle } = require('./battlename');
 
 const TERRAIN_DEF      = { MOUNTAIN:15, FOREST:8, HILLS:5, RIVERLANDS:3, PLAINS:0, COASTAL:-2, SWAMP:6 };
@@ -788,25 +788,22 @@ async function handleRaidApprove(interaction, atkId, defId, compArgs, townNameEn
 
     await interaction.update({ components: [], content: `🗡️ Raid Phase 1 complete. <@${atkId}> — choose to withdraw or press the attack.` });
 
-    // Send withdrawal prompt to attacker
-    const chan = await getNotificationChannel(interaction.client, atk);
-    if (chan) {
-        const emb = new EmbedBuilder()
-            .setTitle(`🗡️ Raid — ${raidWins ? 'Advantage' : 'Resistance'}`)
-            .setColor(raidWins ? 0x00FF88 : 0xFF0000)
-            .setDescription([
-                `Raid against <@${defId}> ${townName ? `(${townName})` : ''}`,
-                `Phase 1: Atk ${atkPower} vs Def ${defPower}`,
-                raidWins ? 'You have the upper hand.' : 'The defenders are holding firm.',
-                '',
-                'Choose your next move (5 min countdown):',
-            ].join('\n'));
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`raidwithdraw_now_${battleData}`).setLabel('🏃 Withdraw Now').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId(`raidwithdraw_press_${battleData}`).setLabel('⚔️ Press the Attack').setStyle(ButtonStyle.Danger)
-        );
-        try { await chan.send({ content: `<@${atkId}>`, embeds: [emb], components: [row] }); } catch (_) {}
-    }
+    // Send withdrawal prompt to attacker via DM
+    const emb = new EmbedBuilder()
+        .setTitle(`🗡️ Raid — ${raidWins ? 'Advantage' : 'Resistance'}`)
+        .setColor(raidWins ? 0x00FF88 : 0xFF0000)
+        .setDescription([
+            `Raid against <@${defId}> ${townName ? `(${townName})` : ''}`,
+            `Phase 1: Atk ${atkPower} vs Def ${defPower}`,
+            raidWins ? 'You have the upper hand.' : 'The defenders are holding firm.',
+            '',
+            'Choose your next move:',
+        ].join('\n'));
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`raidwithdraw_now_${battleData}`).setLabel('🏃 Withdraw Now').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`raidwithdraw_press_${battleData}`).setLabel('⚔️ Press the Attack').setStyle(ButtonStyle.Danger)
+    );
+    await sendToPlayer(interaction.client, interaction, atkId, { embeds: [emb], components: [row] });
 }
 
 async function handleRaidWithdraw(interaction, battleData, isNow) {
@@ -881,10 +878,8 @@ async function handleRaidWithdraw(interaction, battleData, isNow) {
 
     const raidName = generateBattleName('RAID', { townName, attackerNation: atk.nation, attackerRulerName: atk.ruler_name });
 
-    // Notify both players
+    // Notify both players via DM
     for (const uid of [atkId, defId]) {
-        const userObj = uid === atkId ? atk : def;
-        const chan = await getNotificationChannel(interaction.client, userObj);
         const isRaider = uid === atkId;
         const emb = new EmbedBuilder()
             .setTitle(`🗡️ ${raidName} — ${isRaider ? (isNow ? 'Withdrawn' : 'Complete') : 'Raided'}`)
@@ -893,13 +888,11 @@ async function handleRaidWithdraw(interaction, battleData, isNow) {
                 `Raider: <@${atkId}> | Target: <@${defId}>`,
                 isRaider ? (
                     isNow
-                        ? `Withdrew with reduced losses.\nLoot: **${loot} ⚖️**\nLosses: ⚔️${atkLost.inf} 🐎${atkLost.cav} 🏹${atkLost.rng} 🪨${atkLost.sie} 🗡️${atkLost.mercs}`
-                        : `Pressed the attack and ${atkLost.inf+atkLost.cav+atkLost.rng > 0 ? 'sustained casualties' : 'succeeded'}.\nLoot: **${loot} ⚖️**\nLosses: ⚔️${atkLost.inf} 🐎${atkLost.cav} 🏹${atkLost.rng} 🪨${atkLost.sie} 🗡️${atkLost.mercs}`
+                        ? `Withdrew with reduced losses.\nLoot: **${loot} ⚖️**`
+                        : `Pressed the attack.\nLoot: **${loot} ⚖️**`
                 ) : `Raid against you concluded.\nLoot lost: **${loot} ⚖️**${defLosses > 0 ? `\n☠️ Pop loss: ${defLosses} commoners` : ''}`,
             ].join('\n'));
-        let sent = false;
-        if (chan) { try { await chan.send({ content: `<@${uid}>`, embeds: [emb] }); sent = true; } catch (_) {} }
-        if (!sent) { try { const u = await interaction.client.users.fetch(uid); if (u) await u.send({ embeds: [emb] }); } catch (_) {} }
+        await sendToPlayer(interaction.client, interaction, uid, { embeds: [emb] });
     }
 
     await db.run('INSERT INTO gm_events (user_id, gm_id, event_type, severity, effect_snapshot, created_at) VALUES (?,?,?,?,?,?)',

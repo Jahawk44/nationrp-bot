@@ -10,6 +10,7 @@ const actionMod = require('./atlas/action');
 const trade = require('./atlas/trade');
 const diplomacy = require('./atlas/diplomacy');
 const warfare = require('./atlas/warfare');
+const military = require('./atlas/military');
 const admin = require('./admin');
 
 module.exports = {
@@ -26,9 +27,7 @@ module.exports = {
             ))
             .addIntegerOption(o => o.setName('amount').setDescription('Amount to gift').setRequired(true))
         )
-        .addSubcommand(s => s.setName('trade').setDescription('Propose an interactive trade with another player.')
-            .addStringOption(o => o.setName('target').setDescription('Target Player').setRequired(true).setAutocomplete(true))
-        )
+        .addSubcommand(s => s.setName('trade').setDescription('Trade center: manage routes, trade with players and factions.'))
         .addSubcommand(s => s.setName('population').setDescription('View population, noble, and military census.'))
         .addSubcommand(s => s.setName('balance').setDescription('View personal and national wealth.'))
         .addSubcommand(s => s.setName('leaderboard').setDescription('View imperial rankings.')
@@ -41,34 +40,8 @@ module.exports = {
         .addSubcommand(s => s.setName('profile').setDescription('Inspect player lineage.').addStringOption(o => o.setName('user').setDescription('Player').setRequired(false).setAutocomplete(true)))
         .addSubcommand(s => s.setName('diplomacy').setDescription('Diplomatic ledger with faction details and treaties.'))
         .addSubcommand(s => s.setName('empire').setDescription('Imperial status and Vitale market.'))
+        .addSubcommand(s => s.setName('military').setDescription('Military command center: scout, recruit, battle, siege, raid.'))
         .addSubcommand(s => s.setName('town').setDescription('Open the Town Management dashboard.'))
-        .addSubcommandGroup(g => g.setName('action').setDescription('World actions.')
-            .addSubcommand(s => s.setName('scout').setDescription('Scout an enemy settlement.')
-                .addStringOption(o => o.setName('user').setDescription('Target Player').setRequired(true).setAutocomplete(true))
-                .addStringOption(o => o.setName('town').setDescription('Name of the target town').setRequired(true).setAutocomplete(true))
-            )
-            .addSubcommand(s => s.setName('recruit').setDescription('Recruit military units from your commoner population.')
-                .addStringOption(o => o.setName('type').setDescription('Unit type').setRequired(true).addChoices(
-                    { name: '⚔️ Infantry', value: 'infantry' },
-                    { name: '🐎 Cavalry', value: 'cavalry' },
-                    { name: '🏹 Ranged', value: 'ranged' },
-                    { name: '🪨 Siege', value: 'siege' },
-                    { name: '🗡️ Mercenary', value: 'mercenary' }
-                ))
-                .addIntegerOption(o => o.setName('amount').setDescription('Number of units to recruit').setRequired(true).setMinValue(1))
-            )
-            .addSubcommand(s => s.setName('battle').setDescription('Declare field battle against another player.')
-                .addStringOption(o => o.setName('user').setDescription('Target Player').setRequired(true).setAutocomplete(true))
-            )
-            .addSubcommand(s => s.setName('warfare').setDescription('Lay siege to an enemy settlement (Sovereign only).')
-                .addStringOption(o => o.setName('user').setDescription('Target Player').setRequired(true).setAutocomplete(true))
-                .addStringOption(o => o.setName('target_town').setDescription('Name of the target town').setRequired(true).setAutocomplete(true))
-            )
-            .addSubcommand(s => s.setName('raid').setDescription('Launch a raid on another player.')
-                .addStringOption(o => o.setName('user').setDescription('Target Player').setRequired(true).setAutocomplete(true))
-                .addStringOption(o => o.setName('town').setDescription('Target town (optional)').setRequired(false).setAutocomplete(true))
-            )
-        )
         .addSubcommand(s => s.setName('roll').setDescription('Open the Dice Oracle GUI.'))
         .addSubcommandGroup(g => g.setName('gm').setDescription('Game Master Oracle (Whitelisted only)')
             .addSubcommand(s => s.setName('roll').setDescription('Roll a skill check for a player.')
@@ -119,7 +92,7 @@ module.exports = {
         const db = interaction.client.db, group = interaction.options.getSubcommandGroup(false), sub = interaction.options.getSubcommand(false);
         try {
             if (interaction.replied || interaction.deferred) return;
-            const isEphemeral = sub === 'begin' || (group === 'action' && sub === 'scout') || sub === 'town' || sub === 'roll';
+            const isEphemeral = sub === 'begin' || sub === 'town' || sub === 'roll' || sub === 'military';
             await interaction.deferReply({ ephemeral: isEphemeral });
         } catch (e) {
             console.error(`[ATLAS] DEFER ERROR:`, e.message);
@@ -173,19 +146,14 @@ module.exports = {
         if (sub === 'gift') return await economy.handleGift(interaction);
         if (sub === 'trade') return await economy.handleTrade(interaction);
         if (sub === 'empire') return await economy.handleEmpire(interaction);
+        if (sub === 'military') return await military.handleMilitary(interaction);
         if (sub === 'town') return await town.handleTownGUI(interaction);
-        
-        if (group === 'action' && sub === 'scout') return await actionMod.handleScout(interaction);
-        if (group === 'action' && sub === 'recruit') return await actionMod.handleRecruit(interaction);
-        if (group === 'action' && sub === 'battle') return await warfare.handleBattleInitiate(interaction);
-        if (group === 'action' && sub === 'warfare') return await warfare.handleSiegeInitiate(interaction);
-        if (group === 'action' && sub === 'raid') return await warfare.handleRaidInitiate(interaction);
-        if (group === 'nation' && sub === 'found') return await actionMod.handleNationFound(interaction);
         if (sub === 'roll') return await actionMod.handleUserRoll(interaction);
         if (group === 'gm' && sub === 'roll') return await actionMod.handleGMRoll(interaction);
         if (group === 'traderoute' && sub === 'list') return await trade.handleTradeRouteList(interaction);
         if (group === 'traderoute' && sub === 'propose') return await trade.handleTradeRoutePropose(interaction);
         if (group === 'traderoute' && sub === 'cancel') return await trade.handleTradeRouteCancel(interaction, interaction.options.getInteger('route_id'));
+        if (group === 'nation' && sub === 'found') return await actionMod.handleNationFound(interaction);
     },
 
     async handleButton(interaction, action, args) {
@@ -226,6 +194,10 @@ module.exports = {
         if (action === 'raidwithdraw') {
             return await warfare.handleButton(interaction, action, args);
         }
+        if (action === 'mil' && args[0] === 'back') {
+            await interaction.deferUpdate();
+            return await military.handleMilitary(interaction);
+        }
     },
 
     async handleModal(interaction, action, args) {
@@ -250,6 +222,12 @@ module.exports = {
         if (action === 'diplo') {
             return await diplomacy.handleModal(interaction, action, args);
         }
+        if (action === 'trade') {
+            return await economy.handleModal(interaction, action, args);
+        }
+        if (action === 'tmodalg' || action === 'tmodalr') {
+            return await economy.handleModal(interaction, action, args);
+        }
         if (action === 'warcomp') {
             return await warfare.handleBattleCompositionSubmit(interaction, args[0], args[1]);
         }
@@ -263,6 +241,9 @@ module.exports = {
             const townEnc = args.length > 2 ? args.slice(2).join('_') : null;
             return await warfare.handleRaidCompositionSubmit(interaction, args[0], args[1], townEnc);
         }
+        if (action === 'mil') {
+            return await military.handleModal(interaction, action, args);
+        }
     },
 
     async handleSelect(interaction, action, args) {
@@ -274,6 +255,15 @@ module.exports = {
         }
         if (action === 'diplo') {
             return await diplomacy.handleSelect(interaction, action, args);
+        }
+        if (action === 'empire') {
+            return await economy.handleSelect(interaction, action, args);
+        }
+        if (action === 'trade') {
+            return await economy.handleSelect(interaction, action, args);
+        }
+        if (action === 'mil') {
+            return await military.handleSelect(interaction, action, args);
         }
     }
 };

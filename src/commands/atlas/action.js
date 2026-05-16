@@ -162,7 +162,7 @@ async function handleRecruit(interaction) {
     }
 
     // Determine which column
-    const colMap = { INFANTRY: 'mil_infantry', CAVALRY: 'mil_cavalry', RANGED: 'mil_ranged', SIEGE: 'mil_siege' };
+    const colMap = { MILITIA: 'mil_militia', SPEARMEN: 'mil_spearmen', SWORDSMAN: 'mil_swordsman', SHIELD: 'mil_shield', CAVALRY: 'mil_cavalry', RANGED: 'mil_ranged', SIEGE: 'mil_siege' };
     const col = colMap[type];
 
     // Compute new maintenance

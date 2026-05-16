@@ -29,7 +29,7 @@ async function handleEventFire(interaction, type, targetId, severity, amount) {
     for (const f of snapshotFields) snapshot[f] = user[f];
 
     // Apply effects
-    const effects = applyEventEffects(db, user, type, severity, amount);
+    const effects = await applyEventEffects(db, user, type, severity, amount);
 
     // Insert event record
     const now = Date.now();
@@ -126,54 +126,52 @@ function getAffectedFields(type, user) {
     }
 }
 
-function applyEventEffects(db, user, type, severity, amount) {
+async function applyEventEffects(db, user, type, severity, amount) {
     const sev = severity || 1;
     switch (type) {
         case 'famine':
-            db.run('UPDATE users SET food_surplus=MAX(-9999,food_surplus-?), rate_stab=MAX(-10,rate_stab-?) WHERE id=?',
+            await db.run('UPDATE users SET food_surplus=MAX(-9999,food_surplus-?), rate_stab=MAX(-10,rate_stab-?) WHERE id=?',
                 500 * sev, sev, user.id);
             break;
         case 'plague':
             const newPop = Math.max(10, Math.floor((user.pop_commoners || 100) * (1 - 0.15 * sev)));
-            db.run('UPDATE users SET pop_commoners=?, rate_stab=MAX(-10,rate_stab-?) WHERE id=?',
+            await db.run('UPDATE users SET pop_commoners=?, rate_stab=MAX(-10,rate_stab-?) WHERE id=?',
                 newPop, sev, user.id);
             break;
         case 'raid':
-            db.run('UPDATE users SET wealth=MAX(0,wealth-?) WHERE id=?',
+            await db.run('UPDATE users SET wealth=MAX(0,wealth-?) WHERE id=?',
                 500 * sev, user.id);
             break;
         case 'harvest':
-            db.run('UPDATE users SET food_surplus=food_surplus+?, rate_stab=MIN(10,rate_stab+1) WHERE id=?',
+            await db.run('UPDATE users SET food_surplus=food_surplus+?, rate_stab=MIN(10,rate_stab+1) WHERE id=?',
                 2000 * sev, user.id);
             break;
         case 'noble_unrest':
-            db.run('UPDATE users SET rate_prest=MAX(-10,rate_prest-?) WHERE id=?',
+            await db.run('UPDATE users SET rate_prest=MAX(-10,rate_prest-?) WHERE id=?',
                 2 * sev, user.id);
             break;
         case 'imperial_favor':
-            db.run('UPDATE users SET rate_prest=MIN(10,rate_prest+3), vitale=COALESCE(vitale,0)+? WHERE id=?',
+            await db.run('UPDATE users SET rate_prest=MIN(10,rate_prest+3), vitale=COALESCE(vitale,0)+? WHERE id=?',
                 10 * sev, user.id);
             break;
         case 'servus_uprising':
-            handleServusUprising(db, user, sev);
+            await handleServusUprising(db, user, sev);
             break;
         case 'tribute':
-            db.run('UPDATE users SET wealth=MAX(0,wealth-?) WHERE id=?',
+            await db.run('UPDATE users SET wealth=MAX(0,wealth-?) WHERE id=?',
                 amount || 0, user.id);
             break;
     }
 }
 
-function handleServusUprising(db, user, sev) {
-    // Try routing to warfare.js; fall back to basic effect if not yet implemented
+async function handleServusUprising(db, user, sev) {
     try {
         const warfare = require('./warfare');
         if (warfare.handleRebellionEvent) {
-            return warfare.handleRebellionEvent(db, user);
+            return await warfare.handleRebellionEvent(db, user);
         }
     } catch (_) {}
-    // Fallback: basic servus uprising effect
-    db.run('UPDATE users SET rate_stab=MAX(-10,rate_stab-?), servus=MAX(0,servus-10), wealth=MAX(0,wealth-1000) WHERE id=?',
+    await db.run('UPDATE users SET rate_stab=MAX(-10,rate_stab-?), servus=MAX(0,servus-10), wealth=MAX(0,wealth-1000) WHERE id=?',
         3 * sev, user.id);
 }
 

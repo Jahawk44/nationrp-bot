@@ -3,7 +3,7 @@ const {
     StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle
 } = require('discord.js');
 const { FACTIONS } = require('../../data/constants');
-const { getNotificationChannel, isGM } = require('../../utils/helpers');
+const { getNotificationChannel, isGM, sendToPlayer } = require('../../utils/helpers');
 
 const ONE_DAY = 24 * 60 * 60 * 1000;
 
@@ -70,7 +70,8 @@ async function handleDiplomacy(interaction) {
         new ButtonBuilder().setCustomId(`diplo_treaty_${userId}`).setLabel('Propose Treaty').setStyle(ButtonStyle.Success)
     );
     const row2 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`diplo_war_${userId}`).setLabel('⚔️ Declare War').setStyle(ButtonStyle.Danger)
+        new ButtonBuilder().setCustomId(`diplo_war_${userId}`).setLabel('⚔️ Declare War').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId(`diplo_gift_${userId}`).setLabel('🎁 Send Gift').setStyle(ButtonStyle.Success)
     );
 
     return interaction.editReply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu), row, row2] });
@@ -165,7 +166,7 @@ async function handleViewTreaties(interaction, userId) {
 
     const embed = new EmbedBuilder().setTitle('📜 TREATIES').setColor(0x00BFFF).setDescription(lines.join('\n'));
     const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`diplo_view_${userId}`).setLabel('← Back to Ledger').setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId(`diplo_back_${userId}`).setLabel('← Back').setStyle(ButtonStyle.Secondary)
     );
     return interaction.editReply({ embeds: [embed], components: [row] });
 }
@@ -186,7 +187,7 @@ async function handleViewRoutes(interaction, userId) {
 
     const embed = new EmbedBuilder().setTitle('🔄 TRADE ROUTES').setColor(0x00BFFF).setDescription(lines.join('\n'));
     const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`diplo_view_${userId}`).setLabel('← Back to Ledger').setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId(`diplo_back_${userId}`).setLabel('← Back').setStyle(ButtonStyle.Secondary)
     );
     return interaction.editReply({ embeds: [embed], components: [row] });
 }
@@ -210,43 +211,40 @@ async function handleTreatyTypeSelect(interaction, userId) {
     if (interaction.user.id !== userId) return interaction.reply({ content: '⚠️ Only the player who opened this may use it.', ephemeral: true });
     const treatyType = interaction.values[0];
 
-    // Store selection, then show partner autocomplete via a button + modal
-    // Simpler: build a button that opens a modal with partner ID
     await interaction.deferUpdate();
+
+    // Fetch active players for selection
+    const db = interaction.client.db;
+    const players = await db.all("SELECT id, username, ruler_name, nation FROM users WHERE status='active' AND id!=?", userId);
+    if (!players.length) return interaction.editReply({ content: '⚠️ No other active players to propose a treaty with.', components: [] });
+
+    const playerMenu = new StringSelectMenuBuilder()
+        .setCustomId(`diplo_treatyplayer_${userId}_${treatyType}`)
+        .setPlaceholder('Select a player...')
+        .addOptions(players.slice(0, 25).map(p => ({
+            label: `${p.ruler_name || p.username}${p.nation ? ' of ' + p.nation : ''}`,
+            description: `ID: ${p.id}`,
+            value: p.id
+        })));
+
     const embed = new EmbedBuilder()
         .setTitle(`🤝 PROPOSE ${treatyType.replace(/[-_]/g, ' ').toUpperCase()}`)
         .setColor(0x00BFFF)
-        .setDescription('Click below to enter the target player.');
+        .setDescription('Select the player you wish to form a treaty with:');
 
-    const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`diplo_treatyfinal_${userId}_${treatyType}`).setLabel('Choose Partner').setStyle(ButtonStyle.Primary)
+    const backRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`diplo_back_${userId}`).setLabel('← Back').setStyle(ButtonStyle.Secondary)
     );
 
-    return interaction.editReply({ embeds: [embed], components: [row] });
+    return interaction.editReply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(playerMenu), backRow] });
 }
 
-async function handleTreatyFinal(interaction, userId, treatyType) {
+async function handleTreatyPlayerSelect(interaction, userId, treatyType) {
     if (interaction.user.id !== userId) return interaction.reply({ content: '⚠️ Only the player who opened this may use it.', ephemeral: true });
-
-    const modal = new ModalBuilder()
-        .setCustomId(`diplo_treatymod_${userId}_${treatyType}`)
-        .setTitle('🤝 Enter Partner User ID');
-
-    modal.addComponents(new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('partner_id').setLabel('Partner User ID').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(30)
-    ));
-
-    return interaction.showModal(modal);
-}
-
-async function handleTreatyModalSubmit(interaction, userId, treatyType) {
+    const partnerId = interaction.values[0];
     const db = interaction.client.db;
-    const partnerId = interaction.fields.getTextInputValue('partner_id')?.trim();
 
     if (partnerId === userId) return interaction.reply({ content: '⚠️ Cannot propose a treaty to yourself.', ephemeral: true });
-
-    const target = await db.get('SELECT id FROM users WHERE id=? AND status="active"', partnerId);
-    if (!target) return interaction.reply({ content: '⚠️ Target player not found or not active.', ephemeral: true });
 
     const result = await db.run(
         'INSERT INTO treaties (initiator_id, partner_id, treaty_type, status) VALUES (?,?,?,"pending")',
@@ -267,7 +265,16 @@ async function handleTreatyModalSubmit(interaction, userId, treatyType) {
         try { await chan.send({ content: `<@${partnerId}>`, embeds: [emb], components: [row] }); } catch (_) {}
     }
 
-    return interaction.reply({ content: `📨 Treaty proposal sent to <@${partnerId}>. Awaiting response.`, ephemeral: true });
+    await interaction.update({ content: `📨 Treaty proposal sent to <@${partnerId}>.`, embeds: [], components: [] });
+
+    await sendToPlayer(interaction.client, interaction, partnerId, {
+        embeds: [new EmbedBuilder().setTitle('🤝 TREATY PROPOSAL').setColor(0xFFD700)
+            .setDescription(`<@${userId}> proposes a **${treatyType.replace(/[-_]/g, ' ')}** treaty.\n\n*Treaties are binding. Only an admin can dissolve them.*`)],
+        components: [new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`treaty_accept_${treatyId}`).setLabel('Accept').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId(`treaty_reject_${treatyId}`).setLabel('Reject').setStyle(ButtonStyle.Danger)
+        )]
+    });
 }
 
 async function handleTreatyAccept(interaction, treatyId) {
@@ -333,7 +340,7 @@ async function handleWarMenu(interaction, userId) {
             '**Field Battle** — `/atlas action battle`',
             'Open-field engagement. Dominars and Sovereigns may declare.',
             '',
-            '**Siege** — `/atlas action warfare`',
+            '**Siege** — `/atlas action siege`',
             'Lay siege to an enemy settlement. Sovereigns only.',
             '',
             '⚠️ War consumes food supplies and requires GM approval.',
@@ -344,6 +351,65 @@ async function handleWarMenu(interaction, userId) {
     return interaction.editReply({ embeds: [emb], components: [row] });
 }
 
+async function handleGiftMenu(interaction, userId) {
+    if (interaction.user.id !== userId) return interaction.reply({ content: '⚠️ Only the player who opened this may use it.', ephemeral: true });
+    const db = interaction.client.db;
+    const players = await db.all("SELECT id, username, ruler_name, nation FROM users WHERE status='active' AND id!=?", userId);
+    if (!players.length) return interaction.editReply({ content: '⚠️ No other active players to send gifts to.', components: [] });
+
+    const playerMenu = new StringSelectMenuBuilder()
+        .setCustomId(`diplo_giftplayer_${userId}`)
+        .setPlaceholder('Select recipient...')
+        .addOptions(players.slice(0, 25).map(p => ({
+            label: `${p.ruler_name || p.username}${p.nation ? ' of ' + p.nation : ''}`,
+            value: p.id
+        })));
+
+    const emb = new EmbedBuilder().setTitle('🎁 SEND GIFT').setColor(0x00FF88)
+        .setDescription('Select a player to send a gift to.');
+    const backRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`diplo_back_${userId}`).setLabel('← Back').setStyle(ButtonStyle.Secondary)
+    );
+    return interaction.editReply({ embeds: [emb], components: [new ActionRowBuilder().addComponents(playerMenu), backRow] });
+}
+
+async function handleGiftPlayerSelect(interaction, userId) {
+    if (interaction.user.id !== userId) return interaction.reply({ content: '⚠️ Only the player who opened this may use it.', ephemeral: true });
+    const partnerId = interaction.values[0];
+
+    const modal = new ModalBuilder()
+        .setCustomId(`diplo_giftmodal_${userId}_${partnerId}`)
+        .setTitle('🎁 Send Gift');
+    modal.addComponents(
+        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('res').setLabel('Resource (wealth, food_surplus, etc)').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('wealth')),
+        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('amt').setLabel('Amount').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('100'))
+    );
+    return await interaction.showModal(modal);
+}
+
+async function handleModal(interaction, action, args) {
+    if (action === 'diplo' && args[0] === 'giftmodal') {
+        const db = interaction.client.db;
+        const userId = args[1];
+        const partnerId = args[2];
+        const res = interaction.fields.getTextInputValue('res')?.trim().toLowerCase();
+        const amt = parseInt(interaction.fields.getTextInputValue('amt'));
+        if (!res || isNaN(amt) || amt <= 0) return interaction.reply({ content: '⚠️ Invalid input.', ephemeral: true });
+
+        const user = await db.get('SELECT * FROM users WHERE id=?', userId);
+        if ((user[res] || 0) < amt) return interaction.reply({ content: `⚠️ Insufficient ${res}.`, ephemeral: true });
+
+        await db.run(`UPDATE users SET ${res}=${res}-? WHERE id=?`, amt, userId);
+        await db.run(`UPDATE users SET ${res}=COALESCE(${res},0)+? WHERE id=?`, amt, partnerId);
+
+        const { sendToPlayer } = require('../../utils/helpers');
+        await sendToPlayer(interaction.client, interaction, partnerId, {
+            content: `🎁 <@${userId}> sent you **${amt} ${res}**!`
+        });
+        return interaction.reply({ content: `🎁 Gifted **${amt} ${res}** to <@${partnerId}>.`, ephemeral: true });
+    }
+}
+
 // Button handler for diplomacy module
 async function handleButton(interaction, action, args) {
     if (action === 'diplo') {
@@ -351,9 +417,9 @@ async function handleButton(interaction, action, args) {
         const uid = args[1];
         if (sub === 'treaties') { await interaction.deferUpdate(); return await handleViewTreaties(interaction, uid); }
         if (sub === 'routes') { await interaction.deferUpdate(); return await handleViewRoutes(interaction, uid); }
-        if (sub === 'treaty') return await handleProposeTreaty(interaction, uid);
-        if (sub === 'treatyfinal') return await handleTreatyFinal(interaction, uid, args[2]);
+        if (sub === 'treaty') { await interaction.deferUpdate(); return await handleProposeTreaty(interaction, uid); }
         if (sub === 'war') { await interaction.deferUpdate(); return await handleWarMenu(interaction, uid); }
+        if (sub === 'gift') { await interaction.deferUpdate(); return await handleGiftMenu(interaction, uid); }
         if (sub === 'back') { await interaction.deferUpdate(); return await handleDiplomacy(interaction); }
         if (sub === 'bribe') {
             const bribeType = args[1];
@@ -385,15 +451,12 @@ async function handleSelect(interaction, action, args) {
         if (sub === 'treatysel') {
             return await handleTreatyTypeSelect(interaction, uid);
         }
-    }
-}
-
-// Modal handler
-async function handleModal(interaction, action, args) {
-    if (action === 'diplo') {
-        const uid = args[1];
-        const treatyType = args[2];
-        return await handleTreatyModalSubmit(interaction, uid, treatyType);
+        if (sub === 'treatyplayer') {
+            return await handleTreatyPlayerSelect(interaction, uid, args[2]);
+        }
+        if (sub === 'giftplayer') {
+            return await handleGiftPlayerSelect(interaction, uid);
+        }
     }
 }
 

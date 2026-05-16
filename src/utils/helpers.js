@@ -213,10 +213,28 @@ async function getNotificationChannel(client, user) {
     catch (_) { return null; }
 }
 
+// Sends a message to a player: tries DM first, falls back to interaction channel
+async function sendToPlayer(client, interaction, userId, content) {
+    try {
+        const u = await client.users.fetch(userId);
+        if (u) { await u.send(content); return; }
+    } catch (_) {}
+    try {
+        if (interaction && interaction.channel) {
+            await interaction.channel.send(content);
+        }
+    } catch (_) {}
+}
+
 // ─── Army maintenance ─────────────────────────────────────────────────────────
 
 function calcMaintenance(user) {
-    return ((user.mil_infantry || 0) * 1)
+    const inf = (user.mil_infantry || 0); // legacy column, migrate to mil_swordsman
+    return ((user.mil_militia  || 0) * 1)
+         + ((user.mil_spearmen || 0) * 1)
+         + ((user.mil_swordsman|| 0) * 1)
+         + (inf * 1)
+         + ((user.mil_shield   || 0) * 1)
          + ((user.mil_cavalry  || 0) * 2)
          + ((user.mil_ranged   || 0) * 1)
          + ((user.mil_siege    || 0) * 3)
@@ -291,6 +309,11 @@ async function initDB(db) {
         'ALTER TABLE users ADD COLUMN mil_siege INTEGER DEFAULT 0',
         'ALTER TABLE users ADD COLUMN hp_current INTEGER DEFAULT 10',
         'ALTER TABLE users ADD COLUMN pending_battle TEXT DEFAULT NULL',
+        // New infantry type columns
+        'ALTER TABLE users ADD COLUMN mil_militia INTEGER DEFAULT 0',
+        'ALTER TABLE users ADD COLUMN mil_spearmen INTEGER DEFAULT 0',
+        'ALTER TABLE users ADD COLUMN mil_swordsman INTEGER DEFAULT 0',
+        'ALTER TABLE users ADD COLUMN mil_shield INTEGER DEFAULT 0',
     ];
 
     // Create tables that don't exist yet
@@ -358,7 +381,17 @@ async function initDB(db) {
         }
     } catch (e) { console.error('[DB] FIX 4 failed:', e.message); }
 
-    // FIX 5: Ensure military maintenance is charged on existing soldiers
+    // FIX 6: Migrate legacy mil_infantry → mil_swordsman
+    try {
+        const result = await db.run(`
+            UPDATE users SET mil_swordsman = COALESCE(mil_swordsman,0) + COALESCE(mil_infantry,0),
+            mil_infantry = 0
+            WHERE mil_infantry > 0
+        `);
+        if (result.changes > 0) {
+            console.log(`[DB] FIX 6: Migrated ${result.changes} players\' mil_infantry → mil_swordsman.`);
+        }
+    } catch (e) { console.error('[DB] FIX 6 failed:', e.message); }
     // Sets mil_maintenance_cost = pop_soldiers * 1 (1 food per soldier per day)
     // for any row where soldiers > 0 but maintenance_cost is still 0.
     try {
@@ -380,6 +413,7 @@ module.exports = {
     calcStabMultiplier, getCharBonuses, calcNobleState,
     getWarningLevel, formatWarningBanner,
     getPlayerRank, isVitaleFree, getNotificationChannel,
+    sendToPlayer,
     calcMaintenance,
     initDB, STAT_MAPPING,
     GREAT_HOUSES, PLAYER_RANKS, VITALE_FREE_HOUSES
