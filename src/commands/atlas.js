@@ -11,6 +11,7 @@ const trade = require('./atlas/trade');
 const diplomacy = require('./atlas/diplomacy');
 const warfare = require('./atlas/warfare');
 const military = require('./atlas/military');
+const colosseum = require('./atlas/colosseum');
 const admin = require('./admin');
 
 module.exports = {
@@ -20,13 +21,6 @@ module.exports = {
         .addSubcommand(s => s.setName('begin').setDescription('Start your Imperial Origins.'))
         .addSubcommand(s => s.setName('tax').setDescription('Daily tax collection cycle.'))
         .addSubcommand(s => s.setName('donate').setDescription('Donate Balance (:coin:) to National Wealth (⚖️).').addIntegerOption(o => o.setName('amount').setDescription('Amount of Wealth to buy (1 ⚖️ = 1,000 :coin:).').setRequired(true)))
-        .addSubcommand(s => s.setName('gift').setDescription('Gift a resource to another player.')
-            .addStringOption(o => o.setName('target').setDescription('Target Player').setRequired(true).setAutocomplete(true))
-            .addStringOption(o => o.setName('resource').setDescription('Resource to gift').setRequired(true).addChoices(
-                { name: 'Balance', value: 'balance' }, { name: 'Food', value: 'food_surplus' }, { name: 'Ores', value: 'ores' }, { name: 'Vitale', value: 'vitale' }, { name: 'Exotics', value: 'exotics' }, { name: 'Servus', value: 'servus' }
-            ))
-            .addIntegerOption(o => o.setName('amount').setDescription('Amount to gift').setRequired(true))
-        )
         .addSubcommand(s => s.setName('trade').setDescription('Trade center: manage routes, trade with players and factions.'))
         .addSubcommand(s => s.setName('population').setDescription('View population, noble, and military census.'))
         .addSubcommand(s => s.setName('balance').setDescription('View personal and national wealth.'))
@@ -41,6 +35,7 @@ module.exports = {
         .addSubcommand(s => s.setName('diplomacy').setDescription('Diplomatic ledger with faction details and treaties.'))
         .addSubcommand(s => s.setName('empire').setDescription('Imperial status and Vitale market.'))
         .addSubcommand(s => s.setName('military').setDescription('Military command center: scout, recruit, battle, siege, raid.'))
+        .addSubcommand(s => s.setName('colosseum').setDescription('Arena duels and gambling.'))
         .addSubcommand(s => s.setName('town').setDescription('Open the Town Management dashboard.'))
         .addSubcommand(s => s.setName('roll').setDescription('Open the Dice Oracle GUI.'))
         .addSubcommandGroup(g => g.setName('gm').setDescription('Game Master Oracle (Whitelisted only)')
@@ -55,36 +50,6 @@ module.exports = {
         .addSubcommandGroup(g => g.setName('nation').setDescription('Nation Management')
             .addSubcommand(s => s.setName('found').setDescription('Establish a sovereign nation (Requires 100,000 ⚖️).')
                 .addStringOption(o => o.setName('name').setDescription('The name of your nation.').setRequired(true).setMaxLength(32))
-            )
-        )
-        .addSubcommandGroup(g => g.setName('traderoute').setDescription('Trade route management.')
-            .addSubcommand(s => s.setName('list').setDescription('List your active trade routes.'))
-            .addSubcommand(s => s.setName('propose').setDescription('Propose a new trade route.')
-                .addStringOption(o => o.setName('partner_type').setDescription('Trade partner type').setRequired(true).addChoices(
-                    { name: 'Player', value: 'player' },
-                    { name: 'Styx Empire', value: 'styx' },
-                    { name: 'Sciatic League', value: 'sciatic' },
-                    { name: 'Caossa', value: 'caossa' }
-                ))
-                .addStringOption(o => o.setName('give_resource').setDescription('Resource you give').setRequired(true).addChoices(
-                    { name: 'Wealth', value: 'wealth' }, { name: 'Food', value: 'food_surplus' },
-                    { name: 'Ores', value: 'ores' }, { name: 'Vitale', value: 'vitale' },
-                    { name: 'Exotics', value: 'exotics' }, { name: 'Metallurgy', value: 'metallurgy' },
-                    { name: 'Balance', value: 'balance' }, { name: 'Servus', value: 'servus' }
-                ))
-                .addIntegerOption(o => o.setName('give_amount').setDescription('Amount you give').setRequired(true).setMinValue(1))
-                .addStringOption(o => o.setName('receive_resource').setDescription('Resource you receive').setRequired(true).addChoices(
-                    { name: 'Wealth', value: 'wealth' }, { name: 'Food', value: 'food_surplus' },
-                    { name: 'Ores', value: 'ores' }, { name: 'Vitale', value: 'vitale' },
-                    { name: 'Exotics', value: 'exotics' }, { name: 'Metallurgy', value: 'metallurgy' },
-                    { name: 'Balance', value: 'balance' }, { name: 'Servus', value: 'servus' }
-                ))
-                .addIntegerOption(o => o.setName('receive_amount').setDescription('Amount you receive').setRequired(true).setMinValue(1))
-                .addIntegerOption(o => o.setName('duration').setDescription('Duration in turns (1-10)').setRequired(true).setMinValue(1).setMaxValue(10))
-                .addStringOption(o => o.setName('partner').setDescription('Partner player').setRequired(false).setAutocomplete(true))
-            )
-            .addSubcommand(s => s.setName('cancel').setDescription('Cancel a trade route.')
-                .addIntegerOption(o => o.setName('route_id').setDescription('Route ID to cancel').setRequired(true).setMinValue(1))
             )
         ),
 
@@ -143,16 +108,13 @@ module.exports = {
         if (sub === 'population') return await economy.handlePopulation(interaction);
         if (sub === 'balance') return await economy.handleBalance(interaction);
         if (sub === 'donate') return await economy.handleDonate(interaction);
-        if (sub === 'gift') return await economy.handleGift(interaction);
         if (sub === 'trade') return await economy.handleTrade(interaction);
         if (sub === 'empire') return await economy.handleEmpire(interaction);
         if (sub === 'military') return await military.handleMilitary(interaction);
+        if (sub === 'colosseum') return await colosseum.handleColosseum(interaction);
         if (sub === 'town') return await town.handleTownGUI(interaction);
         if (sub === 'roll') return await actionMod.handleUserRoll(interaction);
         if (group === 'gm' && sub === 'roll') return await actionMod.handleGMRoll(interaction);
-        if (group === 'traderoute' && sub === 'list') return await trade.handleTradeRouteList(interaction);
-        if (group === 'traderoute' && sub === 'propose') return await trade.handleTradeRoutePropose(interaction);
-        if (group === 'traderoute' && sub === 'cancel') return await trade.handleTradeRouteCancel(interaction, interaction.options.getInteger('route_id'));
         if (group === 'nation' && sub === 'found') return await actionMod.handleNationFound(interaction);
     },
 
@@ -179,8 +141,9 @@ module.exports = {
             await interaction.deferUpdate();
             return await leaderboard.handleLeaderboard(interaction, args[0] || 'total');
         }
-        if (action === 'traderoute') {
-            return await trade.handleButton(interaction, action, args);
+        if (action === 'lb') {
+            await interaction.deferUpdate();
+            return await leaderboard.handleLeaderboard(interaction, args[0] || 'total');
         }
         if (action === 'diplo') {
             return await diplomacy.handleButton(interaction, action, args);
@@ -197,6 +160,9 @@ module.exports = {
         if (action === 'mil' && args[0] === 'back') {
             await interaction.deferUpdate();
             return await military.handleMilitary(interaction);
+        }
+        if (action === 'colo' || action.startsWith('colo_')) {
+            return await colosseum.handleButton(interaction, action, args);
         }
     },
 
@@ -225,6 +191,9 @@ module.exports = {
         if (action === 'trade') {
             return await economy.handleModal(interaction, action, args);
         }
+        if (action === 'colo') {
+            return await colosseum.handleModal(interaction, action, args);
+        }
         if (action === 'tmodalg' || action === 'tmodalr') {
             return await economy.handleModal(interaction, action, args);
         }
@@ -232,7 +201,7 @@ module.exports = {
             return await warfare.handleBattleCompositionSubmit(interaction, args[0], args[1]);
         }
         if (action === 'wardefmodal') {
-            return await warfare.handleBattleResolve(interaction, args[0], args[1], args[2]);
+            return await warfare.handleBattleResolve(interaction, args[0], args[1], args[2], args[3]);
         }
         if (action === 'warbattlename') {
             return await warfare.handleBattleNameSubmit(interaction, args[0], args[1], args.slice(2));
@@ -264,6 +233,12 @@ module.exports = {
         }
         if (action === 'mil') {
             return await military.handleSelect(interaction, action, args);
+        }
+        if (action === 'colo') {
+            return await colosseum.handleSelect(interaction, action, args);
+        }
+        if (action === 'wardefform') {
+            return await warfare.handleDefenderFormationPick(interaction, args[0], args[1], args[2], args[3]);
         }
     }
 };

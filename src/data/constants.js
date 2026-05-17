@@ -164,14 +164,30 @@ const ARMY_TYPES = {
 };
 
 const FORMATIONS = {
-    SHIELD_WALL: { name: 'Shield Wall', type: 'defensive', preview: '🛡️⚔️🛡️⚔️🛡️\n⚔️🛡️⚔️🛡️⚔️', bonus: '+20% defense', atkMod: 0, defMod: 1.20, counter: 'WEDGE', counteredBy: 'FLANKING' },
+    SHIELD_WALL: { name: 'Shield Wall', type: 'defensive', preview: '🛡️⚔️🛡️⚔️🛡️\n⚔️🛡️⚔️🛡️⚔️', bonus: '+20% defense', atkMod: 0, defMod: 1.20, counter: 'WEDGE', counteredBy: 'FLANKING', reqUnit: 'mil_shield', reqName: 'Shield Infantry' },
     WEDGE:       { name: 'Wedge',       type: 'offensive', preview: '..⚔️..\n.⚔️⚔️.\n⚔️⚔️⚔️', bonus: '+15% attack', atkMod: 1.15, defMod: 1.0, counter: 'LINK', counteredBy: 'SHIELD_WALL' },
     LINE:        { name: 'Line',        type: 'balanced',  preview: '⚔️⚔️⚔️⚔️⚔️', bonus: '+10% vs Wedge', atkMod: 1.0, defMod: 1.0, counter: 'WEDGE', counteredBy: null },
-    SCHILTRON:   { name: 'Schiltron',   type: 'anti-cav',  preview: '🔱⚔️🔱\n🛡️.🛡️\n🔱⚔️🔱', bonus: '+25% def vs Cavalry', atkMod: 1.0, defMod: 1.25, antiCav: true, counteredBy: null },
-    FLANKING:    { name: 'Flanking',    type: 'maneuver',  preview: '🐎⚔️⚔️⚔️⚔️🐎', bonus: '+15% atk, +20% Cav', atkMod: 1.15, defMod: 1.0, cavBonus: 1.20, counter: 'SHIELD_WALL', counteredBy: 'SCHILTRON' },
+    SCHILTRON:   { name: 'Schiltron',   type: 'anti-cav',  preview: '🔱⚔️🔱\n🛡️.🛡️\n🔱⚔️🔱', bonus: '+25% def vs Cavalry', atkMod: 1.0, defMod: 1.25, antiCav: true, counteredBy: null, reqUnit: 'mil_spearmen', reqName: 'Spearmen' },
+    FLANKING:    { name: 'Flanking',    type: 'maneuver',  preview: '🐎⚔️⚔️⚔️⚔️🐎', bonus: '+15% atk, +20% Cav', atkMod: 1.15, defMod: 1.0, cavBonus: 1.20, counter: 'SHIELD_WALL', counteredBy: 'SCHILTRON', reqUnit: 'mil_cavalry', reqName: 'Cavalry' },
 };
 
 const MERC_DESC = 'Soldiers-for-hire drawn from various lands and backgrounds, bound by coin rather than loyalty. They fight effectively but disband at the end of each Imperial turn.';
+
+const DUEL_STANCES = {
+    HEAVY:   { name: 'Heavy Attack', emoji: '⚔️', beats: 'DEFEND', losesTo: 'QUICK', winMult: 2.0, lossMult: 0.5, tieMult: 1.0, desc: 'Powerful swing. Destroys Defend.' },
+    DEFEND:  { name: 'Defend',       emoji: '🛡️', beats: 'QUICK', losesTo: 'HEAVY', winMult: 1.0, lossMult: 0.7, tieMult: 1.0, desc: 'Steady guard. Counters Quick Strike.' },
+    QUICK:   { name: 'Quick Strike', emoji: '⚡', beats: 'HEAVY', losesTo: 'DEFEND', winMult: 1.5, lossMult: 0.5, tieMult: 1.0, desc: 'Fast lunge. Outspeeds Heavy Attack.' },
+};
+
+const DUEL_TERRAIN_MODS = {
+    PLAINS:     { desc: 'Balanced', heavy: 0, defend: 0, quick: 0 },
+    MOUNTAIN:   { desc: '+20% Defend block', heavy: 0, defend: 1.20, quick: 0 },
+    FOREST:     { desc: '+15% Quick Strike dmg', heavy: 0, defend: 0, quick: 1.15 },
+    HILLS:      { desc: '+15% Heavy Attack dmg', heavy: 1.15, defend: 0, quick: 0 },
+    COASTAL:    { desc: '+2 CHA bonus', heavy: 0, defend: 0, quick: 0, chaBonus: 2 },
+    RIVERLANDS: { desc: 'Balanced', heavy: 0, defend: 0, quick: 0 },
+    SWAMP:      { desc: 'Both −2 MOT', heavy: 0, defend: 0, quick: 0, motPenalty: 2 },
+};
 
 module.exports = {
     EMOJIS,
@@ -190,5 +206,7 @@ module.exports = {
     STAT_KEYS,
     ARMY_TYPES,
     FORMATIONS,
-    MERC_DESC
+    MERC_DESC,
+    DUEL_STANCES,
+    DUEL_TERRAIN_MODS
 };

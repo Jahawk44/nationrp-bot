@@ -159,9 +159,43 @@ async function handleSelect(interaction, action, args) {
             const mode = args[3];
             const townName = args[4] || null;
             const formationKey = interaction.values[0];
-            if (!FORMATIONS[formationKey]) return interaction.reply({ content: '⚠️ Unknown formation.', ephemeral: true });
+            const formation = FORMATIONS[formationKey];
+            if (!formation) return interaction.reply({ content: '⚠️ Unknown formation.', ephemeral: true });
 
             const atk = await db.get('SELECT * FROM users WHERE id=?', uid);
+
+            // Validate formation unit requirements
+            if (formation.reqUnit) {
+                const reqCount = atk[formation.reqUnit] || 0;
+                if (reqCount === 0)
+                    return interaction.reply({ content: `⚠️ **${formation.name}** requires **${formation.reqName}** — you don't own any. Recruit them first via \`/atlas military\` → Recruit.`, ephemeral: true });
+            }
+
+            // Styx siege warning
+            if (mode === 'siege' && townName) {
+                const def = await db.get('SELECT * FROM users WHERE id=?', targetId);
+                const STYX_HOUSES = ['TYRANNITE', 'RHAGAIA', 'SELLESELA', 'GAIUS', 'CAOSSA'];
+                const atkHouse = ANCESTRIES[(atk.ancestry||'').toUpperCase()]?.house;
+                const defHouse = ANCESTRIES[(def?.ancestry||'').toUpperCase()]?.house;
+                if (defHouse && STYX_HOUSES.includes(defHouse) && !STYX_HOUSES.includes(atkHouse)) {
+                    const warnEmb = new EmbedBuilder().setTitle('⚠️ DECLARE WAR ON STYX EMPIRE').setColor(0xFF0000)
+                        .setDescription([
+                            `Sieging <@${targetId}> will trigger a war declaration to **ALL** Styx Empire vassals.`,
+                            '',
+                            `They may join to defend their ally at any time.`,
+                            '',
+                            'Open battles against Styx players do NOT call their allies.',
+                            '',
+                            '**Proceed?** Select a formation below to continue, or go Back to cancel.',
+                        ].join('\n'));
+                    await interaction.deferUpdate();
+                    return interaction.editReply({ embeds: [warnEmb], components: [new ActionRowBuilder().addComponents(
+                        new StringSelectMenuBuilder().setCustomId(`mil_formation_${uid}_${targetId}_siege_${encode(townName)}`).setPlaceholder('Choose a formation to proceed...')
+                            .addOptions(Object.entries(FORMATIONS).map(([k,f]) => ({ label: `${f.name} (${f.type})`, value: k, description: f.bonus })))
+                    ), backRow(uid)] });
+                }
+            }
+
             const modal = new ModalBuilder()
                 .setCustomId(`mil_formod_${uid}_${targetId}_${formationKey}_${mode}${townName ? '_' + encode(townName) : ''}`)
                 .setTitle(`${FORMATIONS[formationKey].name} — Commit %`);
@@ -184,7 +218,7 @@ async function handleModal(interaction, action, args) {
         const user = await db.get('SELECT * FROM users WHERE id=?', uid);
 
         if (unitType === 'MERCENARY') {
-            const cost = amt * 500;
+            const cost = amt * 150;
             if ((user.balance||0) < cost) return interaction.reply({ content: `⚠️ Need ${cost} :coin:.`, ephemeral: true });
             await db.run('UPDATE users SET balance=balance-?, mercs_temp=COALESCE(mercs_temp,0)+? WHERE id=?', cost, amt, uid);
             return interaction.reply({ content: `🗡️ Hired **${amt} mercenaries** for ${cost} :coin:.\n*${MERC_DESC}*`, ephemeral: true });
@@ -265,7 +299,7 @@ async function showRecruitMenu(interaction, uid, db) {
             label: `${v.emoji} ${v.name} (${v.cost_balance}:coin: each)`,
             value: k.toLowerCase(),
             description: v.requires ? `Requires: ${v.requires}` : 'No building required'
-        })).concat({ label: '🗡️ Mercenary (500:coin: each)', value: 'mercenary', description: 'Expires at turn end' }));
+        })).concat({ label: '🗡️ Mercenary (150:coin: each)', value: 'mercenary', description: 'Expires at turn end' }));
     return interaction.editReply({ embeds: [new EmbedBuilder().setTitle('⚔️ RECRUIT').setColor(0xFF4400)
         .setDescription(`Pop: ${user.pop_commoners||0} | Balance: ${user.balance||0} :coin: | 🔩: ${user.metallurgy||0}`)], components: [new ActionRowBuilder().addComponents(menu), backRow(uid)] });
 }
@@ -389,11 +423,14 @@ async function handleFormationSubmit(interaction, uid, targetId, formationKey, m
             `🥩 Food: ${foodCost} | ❤️ Morale: ${calcMorale(atk)}`,
             '',
             `🛡️ **Defender morale:** ${def ? calcMorale(def) : '?'}`,
+            '',
+            `**Attacker:** ${atk.ruler_name ? `${atk.ruler_name} (@${atk.username})` : `<@${uid}>`}`,
+            `**Defender:** ${def.ruler_name ? `${def.ruler_name} (@${def.username})` : `<@${targetId}>`}`,
         ].join('\n'));
 
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`warapprove_battle_${uid}_${targetId}_${compStr}_${terrainKey}`).setLabel('✅ Approve').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId(`warreject_battle_${uid}_${targetId}`).setLabel('❌ Reject').setStyle(ButtonStyle.Danger)
+        new ButtonBuilder().setCustomId(`warreject_battle_${uid}_${targetId}_${foodCost}`).setLabel('❌ Reject').setStyle(ButtonStyle.Danger)
     );
 
     const { resolveAtlasHQ, sendToPlayer } = require('../../utils/helpers');
@@ -435,12 +472,22 @@ function showFormationPick(interaction, uid, targetId, townName, mode) {
         .setCustomId(`mil_formation_${uid}_${targetId}_${mode}${townName ? '_' + encode(townName) : ''}`)
         .setPlaceholder('Choose a formation...');
     for (const [key, f] of Object.entries(FORMATIONS)) {
-        menu.addOptions({ label: `${f.name} (${f.type})`, value: key, description: `${f.bonus}` });
+        let label = `${f.name} (${f.type})`;
+        if (f.reqUnit && f.reqName) label += ` — needs ${f.reqName}`;
+        menu.addOptions({ label, value: key, description: `${f.bonus}${f.reqUnit ? ' (unit required)' : ''}` });
     }
+
+    // Styx siege warning
+    const def = interaction.client ? null : null;
+    let styxWarn = '';
+
     const emb = new EmbedBuilder()
         .setTitle('⚔️ Choose Formation')
         .setColor(0xFFD700)
-        .setDescription(Object.entries(FORMATIONS).map(([k,f]) => `**${f.name}** (${f.type}): ${f.bonus}\n\`\`\`\n${f.preview}\n\`\`\``).join('\n'));
+        .setDescription(Object.entries(FORMATIONS).map(([k,f]) => {
+            const req = f.reqUnit ? ` ⚠️ Requires: **${f.reqName}**` : '';
+            return `**${f.name}** (${f.type}): ${f.bonus}${req}\n\`\`\`\n${f.preview}\n\`\`\``;
+        }).join('\n'));
     return interaction.editReply({ embeds: [emb], components: [new ActionRowBuilder().addComponents(menu), backRow(uid)] });
 }
 

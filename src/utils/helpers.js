@@ -228,6 +228,13 @@ async function sendToPlayer(client, interaction, userId, content) {
 
 // ─── Army maintenance ─────────────────────────────────────────────────────────
 
+// Morale used by both warfare and colosseum systems
+function calcMorale(user) {
+    const base = 100 + (user.rate_stab || 0) * 3 + (user.rate_prest || 0) * 2
+        - Math.max(0, -(user.food_surplus || 0)) * 5 - Math.floor((user.servus || 0) / 5) * 2;
+    return Math.max(30, Math.min(150, base));
+}
+
 function calcMaintenance(user) {
     const inf = (user.mil_infantry || 0); // legacy column, migrate to mil_swordsman
     return ((user.mil_militia  || 0) * 1)
@@ -321,6 +328,10 @@ async function initDB(db) {
         'CREATE TABLE IF NOT EXISTS gm_events (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, gm_id TEXT, event_type TEXT, severity INTEGER DEFAULT 1, effect_snapshot TEXT, resolved INTEGER DEFAULT 0, created_at INTEGER)',
         'CREATE TABLE IF NOT EXISTS trade_routes (id INTEGER PRIMARY KEY AUTOINCREMENT, initiator_id TEXT, partner_id TEXT, partner_type TEXT, give_resource TEXT, give_amount INTEGER, receive_resource TEXT, receive_amount INTEGER, duration_turns INTEGER, turns_remaining INTEGER, status TEXT DEFAULT "active", created_at DATETIME DEFAULT CURRENT_TIMESTAMP)',
         'CREATE TABLE IF NOT EXISTS treaties (id INTEGER PRIMARY KEY AUTOINCREMENT, initiator_id TEXT, partner_id TEXT, treaty_type TEXT, status TEXT DEFAULT "pending", turns_active INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)',
+        'ALTER TABLE treaties ADD COLUMN broken_at INTEGER DEFAULT 0',
+        'CREATE TABLE IF NOT EXISTS duels (id INTEGER PRIMARY KEY AUTOINCREMENT, challenger_id TEXT, defender_id TEXT, terrain TEXT, name TEXT, status TEXT DEFAULT "pending", challenger_hp INTEGER DEFAULT 10, defender_hp INTEGER DEFAULT 10, round INTEGER DEFAULT 0, challenger_stance TEXT, defender_stance TEXT, winner_id TEXT, created_at INTEGER)',
+        'ALTER TABLE duels ADD COLUMN name TEXT',
+        'CREATE TABLE IF NOT EXISTS bets (id INTEGER PRIMARY KEY AUTOINCREMENT, duel_id INTEGER, bettor_id TEXT, amount INTEGER, bet_on TEXT, odds REAL, payout INTEGER DEFAULT 0, created_at INTEGER)',
     ];
     for (const sql of newTables) {
         try { await db.run(sql); } catch (_) {}
@@ -414,6 +425,7 @@ module.exports = {
     getWarningLevel, formatWarningBanner,
     getPlayerRank, isVitaleFree, getNotificationChannel,
     sendToPlayer,
+    calcMorale,
     calcMaintenance,
     initDB, STAT_MAPPING,
     GREAT_HOUSES, PLAYER_RANKS, VITALE_FREE_HOUSES

@@ -1,4 +1,4 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder } = require('discord.js');
 const { ANCESTRIES, BUILDINGS, STAT_MAPPING, STAT_KEYS, TERRAINS } = require('../../data/constants');
 const { getMod, getPlayerRank, resolveAtlasHQ, getNotificationChannel, isGM, calcMaintenance, sendToPlayer } = require('../../utils/helpers');
 const { generateBattleName, classifyBattle } = require('./battlename');
@@ -223,11 +223,12 @@ async function handleBattleApprove(interaction, atkId, defId, compArgs, battleNa
 
     await interaction.update({ components: [], content: `⚔️ Battle approved. Awaiting <@${defId}> to commit forces...` });
 
+    const displayName = battleName || 'Battle';
+
     // Lock defender: only battle-response commands allowed
     await db.run('UPDATE users SET pending_battle=? WHERE id=?', `${atkId}|${atkComp}_${terrainKey}|${encodeName(displayName)}`, defId);
 
     // Send defender a "Commit Forces" button
-    const displayName = battleName || 'Battle';
 
     const chan = await getNotificationChannel(interaction.client, def);
     if (chan) {
@@ -262,51 +263,60 @@ async function handleBattleApprove(interaction, atkId, defId, compArgs, battleNa
     } catch (_) {}
 }
 
-// Defender clicks "Commit Forces" → show composition modal
+// Defender clicks "Commit Forces" → show formation pick first
 async function handleDefenderCommit(interaction, atkId, defId, atkComp) {
     const db = interaction.client.db;
     const def = await db.get('SELECT * FROM users WHERE id=?', defId);
-    const atk = await db.get('SELECT * FROM users WHERE id=?', atkId);
     if (!def) return interaction.reply({ content: '⚠️ Data not found.', ephemeral: true });
     if (interaction.user.id !== defId) return interaction.reply({ content: '⚠️ Only the defender may commit forces to this battle.', ephemeral: true });
 
     const atkCompArr = atkComp.split('_');
     const terrainKey = atkCompArr[5] || 'PLAINS';
-    const terrain = TERRAINS[terrainKey.toUpperCase()] || TERRAINS['PLAINS'];
 
-    // Retrieve battle name from pending_battle
-    let battleName = 'Battle';
-    if (def.pending_battle) {
-        const parts = def.pending_battle.split('|');
-        if (parts.length >= 3) battleName = decodeName(parts[2]);
+    // Show formation pick menu
+    const { FORMATIONS } = require('../../data/constants');
+    const menu = new StringSelectMenuBuilder()
+        .setCustomId(`wardefform_${atkId}_${defId}_${atkComp}`)
+        .setPlaceholder('Choose your formation...');
+    for (const [key, f] of Object.entries(FORMATIONS)) {
+        menu.addOptions({ label: `${f.name} (${f.type})`, value: key, description: f.bonus });
     }
+    const emb = new EmbedBuilder().setTitle('🛡️ Choose Formation').setColor(0xFFD700)
+        .setDescription(Object.entries(FORMATIONS).map(([k,f]) => `**${f.name}**: ${f.bonus}\n\`\`\`\n${f.preview}\n\`\`\``).join('\n'));
+    return interaction.reply({ embeds: [emb], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
+}
+
+// Defender picks formation → show percentage modal
+async function handleDefenderFormationPick(interaction, atkId, defId, atkComp, formationKey) {
+    const db = interaction.client.db;
+    const def = await db.get('SELECT * FROM users WHERE id=?', defId);
+    if (!def || interaction.user.id !== defId) return interaction.reply({ content: '⚠️ Access denied.', ephemeral: true });
 
     const modal = new ModalBuilder()
-        .setCustomId(`wardefmodal_${atkId}_${defId}_${atkComp}`)
-        .setTitle(battleName.length > 35 ? battleName.substring(0, 32) + '...' : battleName);
-
-    const fields = [
-        { id: 'inf', label: 'Infantry', max: def.mil_infantry || 0 },
-        { id: 'cav', label: 'Cavalry', max: def.mil_cavalry || 0 },
-        { id: 'rng', label: 'Ranged', max: def.mil_ranged || 0 },
-        { id: 'sie', label: 'Siege', max: def.mil_siege || 0 },
-        { id: 'mercs', label: 'Mercenaries', max: def.mercs_temp || 0 },
-    ];
-    for (const f of fields) {
+        .setCustomId(`wardefmodal_${atkId}_${defId}_${atkComp}_${formationKey}`)
+        .setTitle(`🛡️ Commit Forces — %`);
+    const cols = ['mil_militia','mil_spearmen','mil_swordsman','mil_shield','mil_cavalry','mil_ranged','mil_siege','mercs_temp'];
+    const labels = ['Militiamen','Spearmen','Swordsman','Shield Inf.','Cavalry','Ranged','Siege','Mercenaries'];
+    let added = 0;
+    for (let i = 0; i < cols.length; i++) {
+        const max = def[cols[i]] || 0;
+        if (max === 0 && cols[i] !== 'mercs_temp') continue;
+        if (added >= 5) break;
         modal.addComponents(new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
-                .setCustomId(f.id).setLabel(`${f.label} (max ${f.max})`)
-                .setStyle(TextInputStyle.Short).setRequired(false)
-                .setValue('0').setPlaceholder(`0-${f.max}`)
+            new TextInputBuilder().setCustomId(cols[i]).setLabel(`${labels[i]} (${max})`).setStyle(TextInputStyle.Short).setRequired(false).setValue('0').setPlaceholder('0-100%')
         ));
+        added++;
     }
     return await interaction.showModal(modal);
 }
 
-// Defender submits their composition → battle resolves
-async function handleBattleResolve(interaction, atkId, defId, atkCompStr) {
+    // Defender submits percentage modal → battle resolves
+    async function handleBattleResolve(interaction, atkId, defId, atkCompStr, formationKey) {
     const db = interaction.client.db;
-    const atkComp = atkCompStr.split('_').map(Number);
+    const compParts = atkCompStr.split('_');
+    const atkComp = compParts.slice(0, 8).map(Number);
+    const atkFormation = compParts[8] || 'LINE';
+    const mode = compParts[9] || 'battle';
 
     const atk = await db.get('SELECT * FROM users WHERE id=?', atkId);
     const def = await db.get('SELECT * FROM users WHERE id=?', defId);
@@ -980,10 +990,8 @@ async function handleButton(interaction, action, args) {
     if (action === 'warreject' && args[0] === 'battle') {
         if (!await isGM(interaction.client.db, interaction.user.id))
             return interaction.reply({ content: 'Access Denied.', ephemeral: true });
-        // Refund attacker food (stored in composition — parse comp for food calc)
-        if (args.length > 3) {
-            const compArr = args.slice(3);
-            const refund = fieldFoodCostFor({ inf: parseInt(compArr[0])||0, cav: parseInt(compArr[1])||0, rng: parseInt(compArr[2])||0, mercs: parseInt(compArr[4])||0 });
+        const refund = parseInt(args[3]) || parseInt(args[4]) || 0;
+        if (refund > 0) {
             await interaction.client.db.run('UPDATE users SET food_surplus=food_surplus+? WHERE id=?', refund, args[1]);
         }
         await interaction.update({ components: [], content: '❌ Battle rejected.' });
@@ -1003,6 +1011,8 @@ async function handleButton(interaction, action, args) {
         return handleSiegeDestroy(interaction, args[1], args[2]);
     if (action === 'wardefcommit')
         return handleDefenderCommit(interaction, args[0], args[1], args[2]);
+    if (action === 'wardefform')
+        return handleDefenderFormationPick(interaction, args[0], args[1], args[2], args[3]);
     if (action === 'warraid' && args[0] === 'approve') {
         if (!await isGM(interaction.client.db, interaction.user.id))
             return interaction.reply({ content: 'Access Denied.', ephemeral: true });
@@ -1023,4 +1033,4 @@ async function handleButton(interaction, action, args) {
     }
 }
 
-module.exports = { handleBattleInitiate, handleBattleCompositionSubmit, handleBattleNameSubmit, handleSiegeInitiate, handleRaidInitiate, handleRaidCompositionSubmit, handleButton, handleRebellionEvent };
+module.exports = { handleBattleInitiate, handleBattleCompositionSubmit, handleBattleNameSubmit, handleSiegeInitiate, handleDefenderCommit, handleDefenderFormationPick, handleBattleResolve, handleRaidInitiate, handleRaidCompositionSubmit, handleButton, handleRebellionEvent };

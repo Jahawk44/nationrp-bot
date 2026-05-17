@@ -3,6 +3,36 @@
 
 ---
 
+## ⚡ EXECUTION INSTRUCTION FOR THE AI (DeepSeek V4 Pro / any model)
+
+You are reading a **multi-ticket specification**. Do **not** implement everything at once.
+
+### How to execute this document
+
+1. **First, read the entire document** to understand dependencies, confirmed answers, and the overall order. Do not write any code yet.
+
+2. **Then, implement tickets one by one**, in the exact order shown in the **Implementation Order** section at the bottom.  
+   - After finishing one ticket, **stop** and ask the user:  
+     *“Ticket X.Y complete. Self-verify checklist passed. Ready for next ticket?”*  
+   - Do **not** proceed to the next ticket without confirmation.
+
+3. **For each ticket**:
+   - **Only edit the files specified** in the ticket's `FILES TO EDIT` / `DO NOT TOUCH` lists.
+   - **Assume Part 1 is already fully implemented** (the user confirmed this).
+   - **Use the exact function names, SQL columns, and constants** provided in the ticket.
+   - **Output the code changes** (or describe them if the user asks for explanation).
+   - **Run the self-verify checklist** (the `[ ]` items at the end of the ticket) and report the results.
+
+4. **Context awareness** – The user will have their existing codebase open in the IDE. If you need to see the current state of a file (e.g., `economy.js`), ask the user to share it or rely on the IDE’s context. Do **not** hallucinate missing code.
+
+5. **Preserve all planning detail** – The long tables, confirmed answers, army system, production loop steps, and exact multiplier values are **not** optional. They are the “strength of Sonnet” – treat them as immutable specifications.
+
+6. **If a ticket references a LOREBOOK PENDING item**, implement the **stub behaviour** described (e.g., show “⚠️ Coming soon” in GUI). Do not invent lore text.
+
+7. **Never auto-apply GM-only effects** (e.g., Atomic Guild low‑relation notifications are just GM alerts, no auto‑damage).
+
+---
+
 > **This document supersedes any placeholder or ⚠️ CONFIRM note in Part 1.**
 > All answers confirmed by Suns are applied here. LOREBOOK PENDING items are clearly marked and must not have flavor text written until lorebook.md is complete.
 >

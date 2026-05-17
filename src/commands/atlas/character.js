@@ -158,10 +158,11 @@ async function handleOriginsLogic(interaction, action, args) {
 
     if (action === 'fbfinalize') {
         const [anc, ub, prof, distStr, age] = args;
-        const modal = new ModalBuilder().setCustomId(`originsmodal_${anc}_${ub}_${prof}_${distStr || '000000'}_${age}`).setTitle('Imperial Audit — Biography');
+        const modal = new ModalBuilder().setCustomId(`originsmodal_${anc}_${ub}_${prof}_${distStr || '000000'}_${age}`).setTitle('Imperial Audit — Finalize');
         modal.addComponents(
             new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('ruler_name').setLabel('Character Name').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(32)),
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('description').setLabel('Biography').setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(1500))
+            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('description').setLabel('Biography').setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(1500)),
+            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('channel_id').setLabel('Personal Channel ID (REQUIRED)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(25).setPlaceholder('Ask an Admin for your channel ID'))
         );
         return await interaction.showModal(modal);
     }
@@ -215,7 +216,16 @@ async function handleModal(interaction, action, args) {
         const dist = distStr.split('').map(Number);
         const rulerName = interaction.fields.getTextInputValue('ruler_name')?.trim();
         const description = interaction.fields.getTextInputValue('description')?.trim();
-        
+        const channelId = interaction.fields.getTextInputValue('channel_id')?.trim();
+
+        // Validate channel exists
+        try {
+            const chan = await interaction.client.channels.fetch(channelId);
+            if (!chan) throw new Error('invalid');
+        } catch (_) {
+            return interaction.reply({ content: '⚠️ **Invalid Channel ID.** Please enter a valid Discord channel ID. Ask an Admin if you don\'t know yours. Try `/atlas begin` again.', ephemeral: true });
+        }
+
         await interaction.deferUpdate();
         
         const db = interaction.client.db;
@@ -233,12 +243,12 @@ async function handleModal(interaction, action, args) {
             status = 'pending_audit', ancestry = ?, upbringing = ?, profession = ?, age = ?,
             ruler_name = ?, username = ?,
             attr_str = ?, attr_mot = ?, attr_int = ?, attr_men = ?, attr_wis = ?, attr_cha = ?,
-            description = ?
+            description = ?, notification_channel = ?
             WHERE id = ?`,
             anc, ub, prof, age,
             rulerName, interaction.user.username,
             stats.stat_str, stats.stat_mot, stats.stat_int, stats.stat_men, stats.stat_wis, stats.stat_cha,
-            description, interaction.user.id
+            description, channelId, interaction.user.id
         );
 
         const statBlock = [

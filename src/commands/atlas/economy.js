@@ -337,6 +337,7 @@ async function handleTrade(interaction) {
         .addOptions([
             { label: 'View My Routes', value: 'list', description: 'Show all active trade routes' },
             { label: 'New Route (Faction)', value: 'new', description: 'Continuous route with Styx/Sciatic/Caossa' },
+            { label: 'New Route (Player)', value: 'newplayer', description: 'Continuous route with a player' },
         ]);
 
     if (routes.length > 0) {
@@ -389,11 +390,32 @@ async function renderEmpireEmbed(db) {
     const demandRatio = vitaleSold / Math.max(1, vitalePool);
     const vitalePrice = Math.floor(50 * (1 + demandRatio * 4));
 
+    // Styx Empire stats
+    const STYX_HOUSES = ['TYRANNITE', 'RHAGAIA', 'SELLESELA', 'GAIUS', 'CAOSSA'];
+    const styxPlayers = await db.all("SELECT id, mil_militia, mil_spearmen, mil_swordsman, mil_shield, mil_cavalry, mil_ranged, mil_siege, nation FROM users WHERE status='active'");
+    const { ANCESTRIES } = require('../../data/constants');
+    let vassalCount = 0, totalStyxMil = 0;
+    const vassalNames = [];
+    for (const p of styxPlayers) {
+        const ancRow = await db.get('SELECT ancestry FROM users WHERE id=?', p.id || '');
+        const house = ANCESTRIES[(ancRow?.ancestry || '').toUpperCase()]?.house;
+        if (house && STYX_HOUSES.includes(house)) {
+            vassalCount++;
+            totalStyxMil += (p.mil_militia||0)+(p.mil_spearmen||0)+(p.mil_swordsman||0)+(p.mil_shield||0)+(p.mil_cavalry||0)+(p.mil_ranged||0)+(p.mil_siege||0);
+            if (p.nation) vassalNames.push(p.nation);
+        }
+    }
+    const vassalStr = vassalCount > 0 ? `${vassalCount} vassal(s) | ⚔️ ${totalStyxMil} total military` : 'No vassals sworn';
+
     return new EmbedBuilder().setTitle('🏛️ STYX EMPIRE DASHBOARD').setColor(0x6A0DAD)
         .setDescription([
             `**Vitale Market**`,
             `Pool: ${vitalePool} 💧 | Sold: ${vitaleSold} 💧`,
             `Current Price: **${vitalePrice} ⚖️** per unit`,
+            ``,
+            `**Styx Empire Status**`,
+            `${vassalStr}`,
+            vassalNames.length > 0 ? `Nations: ${vassalNames.join(', ')}` : '',
             ``,
             `*Price rises with weekly demand. Market resets each Monday.*`,
         ].join('\n'));
@@ -608,6 +630,14 @@ async function handleSelect(interaction, action, args) {
             return await tradeMod.handleTradeRouteList(interaction);
         }
         if (val === 'new') return interaction.reply({ content: 'Use `/atlas empire` and select a faction to trade with. For player routes, select a player above.', ephemeral: true });
+        if (val === 'newplayer') {
+            const uid = args[1];
+            if (!players.length) return interaction.reply({ content: 'No other active players.', ephemeral: true });
+            const pMenu = new StringSelectMenuBuilder().setCustomId(`trade_newplayer_${uid}`).setPlaceholder('Select a player...')
+                .addOptions(players.slice(0,25).map(p => ({ label: `${p.ruler_name||p.username}${p.nation?' of '+p.nation:''}`, value: p.id })));
+            await interaction.deferUpdate();
+            return interaction.editReply({ embeds: [new EmbedBuilder().setTitle('📨 New Player Route').setColor(0x00BFFF).setDescription('Select a player for a continuous trade route.')], components: [new ActionRowBuilder().addComponents(pMenu)] });
+        }
         if (val === 'cancel') return interaction.reply({ content: 'Select a specific route below to cancel it.', ephemeral: true });
         if (val.startsWith('cancel_')) {
             const routeId = parseInt(val.split('_')[1]);
@@ -615,6 +645,25 @@ async function handleSelect(interaction, action, args) {
             const tradeMod = require('./trade');
             return await tradeMod.handleTradeRouteCancel(interaction, routeId);
         }
+    }
+
+    // Trade: new player route selected
+    if (action === 'trade' && args[0] === 'newplayer') {
+        const initiatorId = args[1];
+        const partnerId = interaction.values[0];
+        if (interaction.user.id !== initiatorId) return interaction.reply({ content: '⚠️ Only the player who opened this may use it.', ephemeral: true });
+
+        const modal = new ModalBuilder()
+            .setCustomId(`trade_newplayer_mod_${initiatorId}_${partnerId}`)
+            .setTitle('📨 Player Trade Route');
+        modal.addComponents(
+            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('give_res').setLabel('Resource you give').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('wealth')),
+            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('give_amt').setLabel('Amount per turn').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('100')),
+            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('recv_res').setLabel('Resource you receive').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('food_surplus')),
+            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('recv_amt').setLabel('Amount per turn').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('50')),
+            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('duration').setLabel('Duration (1-10 turns)').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('3'))
+        );
+        return await interaction.showModal(modal);
     }
 }
 

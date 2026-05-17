@@ -4,6 +4,7 @@ const {
 } = require('discord.js');
 const { FACTIONS } = require('../../data/constants');
 const { getNotificationChannel, isGM, sendToPlayer } = require('../../utils/helpers');
+const { ANCESTRIES } = require('../../data/constants');
 
 const ONE_DAY = 24 * 60 * 60 * 1000;
 
@@ -33,7 +34,11 @@ async function handleDiplomacy(interaction) {
     for (const faction of FACTIONS) {
         const score = relMap[faction]?.score || 0;
         const segs = Math.round(Math.min(10, Math.max(0, (score + 30) / 6)));
-        const bar = '█'.repeat(segs) + '░'.repeat(10 - segs);
+        // Color: green for positive, yellow for neutral, red for negative
+        const green = score > 0 ? Math.min(10, Math.max(0, Math.round(score / 3))) : 0;
+        const red = score < 0 ? Math.min(10, Math.max(0, Math.round(-score / 3))) : 0;
+        const yellow = 10 - green - red;
+        const bar = '🟩'.repeat(green) + '🟨'.repeat(yellow) + '🟥'.repeat(red);
         let tag;
         if (faction === 'Tyrannite' && score <= -20) tag = 'EMBARGOED';
         else if (score >= 15) tag = 'Allied';
@@ -109,11 +114,20 @@ async function handleFactionDetail(interaction, userId, factionName) {
         .setColor(0x00BFFF);
 
     const factionIndex = FACTIONS.indexOf(factionName);
-    const row = new ActionRowBuilder().addComponents(
+    const components = [
         new ButtonBuilder().setCustomId(`diplo_bribe_gold_${userId}_${factionIndex}`).setEmoji('🪙').setLabel(`500 → +1`).setStyle(ButtonStyle.Primary).setDisabled(!canBribe || (user.balance || 0) < 500),
         new ButtonBuilder().setCustomId(`diplo_bribe_exotic_${userId}_${factionIndex}`).setEmoji('🍷').setLabel(`1 → +3`).setStyle(ButtonStyle.Success).setDisabled(!canBribe || (user.exotics || 0) < 1),
-        new ButtonBuilder().setCustomId(`diplo_back_${userId}`).setLabel('← Back').setStyle(ButtonStyle.Secondary)
-    );
+    ];
+    // Submit to Styx: only for Tyrannite, only if player is Independent/Free Tribe and not already Styx
+    if (factionName === 'Tyrannite') {
+        const userRow = await db.get('SELECT ancestry FROM users WHERE id=?', userId);
+        const house = ANCESTRIES[(userRow?.ancestry||'').toUpperCase()]?.house;
+        if (house && !['TYRANNITE','RHAGAIA','SELLESELA','GAIUS','CAOSSA'].includes(house)) {
+            components.push(new ButtonBuilder().setCustomId(`diplo_submit_styx_${userId}`).setLabel('🏛️ Submit to Styx').setStyle(ButtonStyle.Danger));
+        }
+    }
+    components.push(new ButtonBuilder().setCustomId(`diplo_back_${userId}`).setLabel('← Back').setStyle(ButtonStyle.Secondary));
+    const row = new ActionRowBuilder().addComponents(components);
 
     return interaction.editReply({ embeds: [embed], components: [row], content: cooldownNote || null });
 }
@@ -157,18 +171,29 @@ async function handleViewTreaties(interaction, userId) {
         "SELECT * FROM treaties WHERE (initiator_id=? OR partner_id=?) AND status NOT IN ('completed','broken')",
         userId, userId
     );
-    if (!treaties.length) return interaction.editReply({ content: 'No active treaties. Use **Propose Treaty** to negotiate with another player.\n\n*Treaties are binding. Only an admin can dissolve them.*' });
+    if (!treaties.length) return interaction.editReply({ content: 'No active treaties. Use **Propose Treaty** to negotiate with another player.\n\n*Treaties are binding. Only an admin can dissolve them immediately.*', components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`diplo_back_${userId}`).setLabel('← Back').setStyle(ButtonStyle.Secondary))] });
 
     const lines = treaties.map(t => {
         const partner = t.initiator_id === userId ? t.partner_id : t.initiator_id;
-        return `**#${t.id}** | ${t.treaty_type} with <@${partner}> | ${t.status} | ${t.turns_active} turns active`;
+        const ending = t.status === 'ending' && t.broken_at ? `⏳ Ends <t:${Math.floor(t.broken_at/1000)}:R>` : t.status;
+        return `**#${t.id}** | ${t.treaty_type.replace(/[-_]/g,' ')} with <@${partner}> | ${ending} | ${t.turns_active} turns`;
     });
 
     const embed = new EmbedBuilder().setTitle('📜 TREATIES').setColor(0x00BFFF).setDescription(lines.join('\n'));
-    const row = new ActionRowBuilder().addComponents(
+    const components = [new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`diplo_back_${userId}`).setLabel('← Back').setStyle(ButtonStyle.Secondary)
-    );
-    return interaction.editReply({ embeds: [embed], components: [row] });
+    )];
+
+    // End Treaty buttons
+    for (const t of treaties) {
+        if (t.status === 'active') {
+            components.push(new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(`diplo_endtreaty_${t.id}_${userId}`).setLabel(`End #${t.id} (3-day)`).setStyle(ButtonStyle.Danger)
+            ));
+        }
+    }
+
+    return interaction.editReply({ embeds: [embed], components });
 }
 
 async function handleViewRoutes(interaction, userId) {
@@ -337,10 +362,10 @@ async function handleWarMenu(interaction, userId) {
         .setDescription([
             'Choose your form of attack:',
             '',
-            '**Field Battle** — `/atlas action battle`',
+            '**Field Battle** — `/atlas military` (Battle)',
             'Open-field engagement. Dominars and Sovereigns may declare.',
             '',
-            '**Siege** — `/atlas action siege`',
+            '**Siege** — `/atlas military` (Siege)',
             'Lay siege to an enemy settlement. Sovereigns only.',
             '',
             '⚠️ War consumes food supplies and requires GM approval.',
@@ -377,14 +402,23 @@ async function handleGiftPlayerSelect(interaction, userId) {
     if (interaction.user.id !== userId) return interaction.reply({ content: '⚠️ Only the player who opened this may use it.', ephemeral: true });
     const partnerId = interaction.values[0];
 
-    const modal = new ModalBuilder()
-        .setCustomId(`diplo_giftmodal_${userId}_${partnerId}`)
-        .setTitle('🎁 Send Gift');
-    modal.addComponents(
-        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('res').setLabel('Resource (wealth, food_surplus, etc)').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('wealth')),
-        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('amt').setLabel('Amount').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('100'))
-    );
-    return await interaction.showModal(modal);
+    const resourceMenu = new StringSelectMenuBuilder()
+        .setCustomId(`diplo_giftres_${userId}_${partnerId}`)
+        .setPlaceholder('Select resource to gift...')
+        .addOptions([
+            { label: '💰 Balance', value: 'balance' },
+            { label: '🥩 Food', value: 'food_surplus' },
+            { label: '⚒️ Ores', value: 'ores' },
+            { label: '💧 Vitale', value: 'vitale' },
+            { label: '🍷 Exotics', value: 'exotics' },
+            { label: '🔩 Metallurgy', value: 'metallurgy' },
+            { label: '⚖️ Wealth', value: 'wealth' },
+            { label: '🔗 Servus', value: 'servus' },
+        ]);
+    await interaction.deferUpdate();
+
+    const emb = new EmbedBuilder().setTitle('🎁 SEND GIFT').setColor(0x00FF88).setDescription('Select the resource to send.');
+    return interaction.editReply({ embeds: [emb], components: [new ActionRowBuilder().addComponents(resourceMenu)] });
 }
 
 async function handleModal(interaction, action, args) {
@@ -392,7 +426,7 @@ async function handleModal(interaction, action, args) {
         const db = interaction.client.db;
         const userId = args[1];
         const partnerId = args[2];
-        const res = interaction.fields.getTextInputValue('res')?.trim().toLowerCase();
+        const res = args[3];
         const amt = parseInt(interaction.fields.getTextInputValue('amt'));
         if (!res || isNaN(amt) || amt <= 0) return interaction.reply({ content: '⚠️ Invalid input.', ephemeral: true });
 
@@ -402,7 +436,6 @@ async function handleModal(interaction, action, args) {
         await db.run(`UPDATE users SET ${res}=${res}-? WHERE id=?`, amt, userId);
         await db.run(`UPDATE users SET ${res}=COALESCE(${res},0)+? WHERE id=?`, amt, partnerId);
 
-        const { sendToPlayer } = require('../../utils/helpers');
         await sendToPlayer(interaction.client, interaction, partnerId, {
             content: `🎁 <@${userId}> sent you **${amt} ${res}**!`
         });
@@ -420,7 +453,23 @@ async function handleButton(interaction, action, args) {
         if (sub === 'treaty') { await interaction.deferUpdate(); return await handleProposeTreaty(interaction, uid); }
         if (sub === 'war') { await interaction.deferUpdate(); return await handleWarMenu(interaction, uid); }
         if (sub === 'gift') { await interaction.deferUpdate(); return await handleGiftMenu(interaction, uid); }
+        if (sub === 'endtreaty') {
+            const treatyId = parseInt(args[2]);
+            await interaction.deferUpdate();
+            const db = interaction.client.db;
+            const treaty = await db.get('SELECT * FROM treaties WHERE id=? AND (initiator_id=? OR partner_id=?) AND status=?', treatyId, uid, uid, 'active');
+            if (!treaty) return interaction.editReply({ content: '⚠️ Treaty not found or already ending.', components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`diplo_back_${uid}`).setLabel('← Back').setStyle(ButtonStyle.Secondary))] });
+            const threeDays = Date.now() + 3 * 24 * 60 * 60 * 1000;
+            await db.run("UPDATE treaties SET status='ending', broken_at=? WHERE id=?", threeDays, treatyId);
+            return interaction.editReply({ content: `📜 Treaty #${treatyId} will end <t:${Math.floor(threeDays/1000)}:R>. 3-day grace period active.`, components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`diplo_back_${uid}`).setLabel('← Back').setStyle(ButtonStyle.Secondary))] });
+        }
         if (sub === 'back') { await interaction.deferUpdate(); return await handleDiplomacy(interaction); }
+        if (sub === 'submit' && args[1] === 'styx') {
+            await interaction.deferUpdate();
+            const db = interaction.client.db;
+            await db.run("UPDATE users SET rate_prest=MAX(-10,rate_prest-5), great_house='TYRANNITE' WHERE id=?", uid);
+            return interaction.editReply({ content: '🏛️ You have submitted to the **Styx Empire**. Your prestige has fallen by **−5** but you are now under the Empire\'s protection. Siege by non-Styx players will trigger allied response.', components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`diplo_back_${uid}`).setLabel('← Back').setStyle(ButtonStyle.Secondary))] });
+        }
         if (sub === 'bribe') {
             const bribeType = args[1];
             const uid = args[2];
@@ -456,6 +505,17 @@ async function handleSelect(interaction, action, args) {
         }
         if (sub === 'giftplayer') {
             return await handleGiftPlayerSelect(interaction, uid);
+        }
+        if (sub === 'giftres') {
+            const partnerId = args[2];
+            const res = interaction.values[0];
+            const modal = new ModalBuilder()
+                .setCustomId(`diplo_giftmodal_${uid}_${partnerId}_${res}`)
+                .setTitle('🎁 Send Gift');
+            modal.addComponents(new ActionRowBuilder().addComponents(
+                new TextInputBuilder().setCustomId('amt').setLabel('Amount to send').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('100')
+            ));
+            return await interaction.showModal(modal);
         }
     }
 }

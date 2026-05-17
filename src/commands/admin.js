@@ -21,7 +21,10 @@ module.exports = {
                     { name: '⚖️ Status', value: 'status' }, { name: '👤 Username', value: 'username' }
                 ))
                 .addStringOption(o => o.setName('value').setDescription('Value').setRequired(true).setAutocomplete(true))
-                .addStringOption(o => o.setName('channel_id').setDescription('Set notification channel for this player').setRequired(false))
+            )
+            .addSubcommand(s => s.setName('setchannel').setDescription('Set a player notification channel.')
+                .addStringOption(o => o.setName('target').setDescription('Player').setRequired(true).setAutocomplete(true))
+                .addStringOption(o => o.setName('channel_id').setDescription('Channel ID').setRequired(true))
             )
             .addSubcommand(s => s.setName('purge').setDescription('Completely erase a player lineage.')
                 .addStringOption(o => o.setName('target').setDescription('The user to purge').setRequired(true).setAutocomplete(true))
@@ -177,19 +180,6 @@ module.exports = {
             }
             if (sub === 'edit') {
                 const field = interaction.options.getString('field'), val = interaction.options.getString('value');
-                const channelId = interaction.options.getString('channel_id');
-
-                if (channelId) {
-                    try {
-                        const chan = await interaction.client.channels.fetch(channelId);
-                        if (!chan) throw new Error('not found');
-                        await db.run('UPDATE users SET notification_channel = ? WHERE id = ?', channelId, targetId);
-                        return await interaction.editReply({ embeds: [new EmbedBuilder().setTitle('👤 SYSTEM EDIT').setDescription(`Notification channel for <@${targetId}> set to <#${channelId}>.`).setColor(0x0099FF)] });
-                    } catch (_) {
-                        return interaction.editReply({ content: '⚠️ Channel not found. Please provide a valid channel ID.' });
-                    }
-                }
-
                 if (field === 'town_name') {
                     const t = await db.get('SELECT id FROM towns WHERE user_id = ? ORDER BY id ASC LIMIT 1', targetId);
                     if (t) await db.run('UPDATE towns SET name = ? WHERE id = ?', val, t.id);
@@ -198,6 +188,18 @@ module.exports = {
                     await db.run(`UPDATE users SET ${field} = ? WHERE id = ?`, val, targetId);
                 }
                 return await interaction.editReply({ embeds: [new EmbedBuilder().setTitle('👤 SYSTEM EDIT').setDescription(`<@${targetId}> record \`${field}\` set to \`${val}\`.`).setColor(0x0099FF)] });
+            }
+            if (sub === 'setchannel') {
+                const targetId = interaction.options.getString('target');
+                const channelId = interaction.options.getString('channel_id');
+                try {
+                    const chan = await interaction.client.channels.fetch(channelId);
+                    if (!chan) throw new Error('not found');
+                    await db.run('UPDATE users SET notification_channel = ? WHERE id = ?', channelId, targetId);
+                    return await interaction.editReply({ embeds: [new EmbedBuilder().setTitle('📡 CHANNEL SET').setDescription(`Notification channel for <@${targetId}> set to <#${channelId}>.`).setColor(0x00FF88)] });
+                } catch (_) {
+                    return interaction.editReply({ content: '⚠️ Channel not found. Please provide a valid channel ID.' });
+                }
             }
         }
 
