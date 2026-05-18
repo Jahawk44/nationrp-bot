@@ -306,11 +306,14 @@ async function handleDefenderFormationPick(interaction, atkId, defId, atkComp, f
 }
 
     // Defender submits percentage modal → battle resolves
+    // atkCompStr format (from military.js handleFormationSubmit compStr + terrainKey appended by handleBattleApprove button):
+    // 8 unit counts (dash-separated) + terrainKey as the last part
     async function handleBattleResolve(interaction, atkId, defId, atkCompStr, formationKey) {
     const db = interaction.client.db;
     const compParts = atkCompStr.split('-');
-    const atkCompArr = compParts.slice(0,8).map(Number);
-    const terrainKey = compParts[8] || 'PLAINS';
+    // The last part is the terrain key appended by handleBattleApprove
+    const terrainKey = compParts[compParts.length - 1] || 'PLAINS';
+    const atkCompArr = compParts.slice(0, compParts.length - 1).map(Number);
 
     const atk = await db.get('SELECT * FROM users WHERE id=?', atkId);
     const def = await db.get('SELECT * FROM users WHERE id=?', defId);
@@ -363,8 +366,15 @@ async function handleDefenderFormationPick(interaction, atkId, defId, atkComp, f
     const polyB   = hasCav ? POLYSIA_CAV_BONUS : 0;
     const counter = compCounterBonus(atkForPower, defForPower);
 
-    const atkPower = calcArmyPower(atkForPower, 'field', terrainKey) + atkOff * 5 + menMod * 2 + polyB + counter + atkRoll + agBonusAtk;
-    const defPower = calcArmyPower(defForPower, 'field', terrainKey) * 1.2 + (await calcOffenseScore(db, defId)) * 5 + defRoll + agBonusDef;
+    // FIX: Apply formation modifiers to power calculation
+    const { FORMATIONS } = require('../../data/constants');
+    const atkFormObj = FORMATIONS[formationKey] || {};
+    // Defender's formation is unknown here (they chose via the modal flow), default 1.0
+    const atkFormMod = atkFormObj.atkMod || 1.0;
+    const atkFormDefMod = atkFormObj.defMod || 1.0;
+
+    const atkPower = (calcArmyPower(atkForPower, 'field', terrainKey) * atkFormMod) + atkOff * 5 + menMod * 2 + polyB + counter + atkRoll + agBonusAtk;
+    const defPower = (calcArmyPower(defForPower, 'field', terrainKey) * atkFormDefMod * 1.2) + (await calcOffenseScore(db, defId)) * 5 + defRoll + agBonusDef;
 
     const winnerId = atkPower > defPower ? atkId : defId;
     const isAtkWin = winnerId === atkId;
@@ -549,6 +559,9 @@ async function handleSiegeConfirm(interaction, atkId, defId, townId) {
     const town = await db.get('SELECT * FROM towns WHERE id=?', townId);
     if (!atk || !def || !town) return interaction.reply({ content: '⚠️ Data not found.', ephemeral: true });
 
+    // FIX: Generate battle name FIRST, before any if/else branches reference it
+    const siegeName = generateBattleName('SIEGE', { townName: town.name, attackerNation: atk.nation, defenderNation: def.nation, attackerRulerName: atk.ruler_name });
+
     const defSupplied = (def.food_surplus || 0) >= siegeFoodCostDef(def);
     const atkRoll = Math.floor(Math.random() * 20) + 1;
     const defRoll = Math.floor(Math.random() * 20) + 1;
@@ -580,6 +593,9 @@ async function handleSiegeConfirm(interaction, atkId, defId, townId) {
         await db.run('UPDATE users SET rate_stab=MAX(-10,rate_stab-3) WHERE id=?', def.id);
         await db.run('UPDATE users SET rate_prest=MIN(10,rate_prest+2) WHERE id=?', atk.id);
 
+        await db.run('INSERT INTO gm_events (user_id, gm_id, event_type, severity, effect_snapshot, created_at) VALUES (?,?,?,?,?,?)',
+            winner.id, interaction.user.id, 'siege', 1, JSON.stringify({ atk: atkId, def: defId, winner: winner.id, battleName: siegeName }), Date.now());
+
         // Show destroy building buttons to GM
         const bldgs = await db.all('SELECT * FROM buildings WHERE town_id=?', townId);
         if (bldgs.length > 0) {
@@ -603,14 +619,12 @@ async function handleSiegeConfirm(interaction, atkId, defId, townId) {
         await applySiegeCasualties(db, atk, al, true);
         await db.run('UPDATE users SET rate_stab=MAX(-10,rate_stab-2) WHERE id=?', atk.id);
         await db.run('UPDATE users SET rate_prest=MIN(10,rate_prest+3) WHERE id=?', def.id);
+
+        await db.run('INSERT INTO gm_events (user_id, gm_id, event_type, severity, effect_snapshot, created_at) VALUES (?,?,?,?,?,?)',
+            winner.id, interaction.user.id, 'siege', 1, JSON.stringify({ atk: atkId, def: defId, winner: winner.id, battleName: siegeName }), Date.now());
+
         await interaction.update({ components: [], content: `🏰 Siege resolved. **<@${def.id}>** holds ${town.name}!` });
     }
-
-    await db.run('INSERT INTO gm_events (user_id, gm_id, event_type, severity, effect_snapshot, created_at) VALUES (?,?,?,?,?,?)',
-        winner.id, interaction.user.id, 'siege', 1, JSON.stringify({ atk: atkId, def: defId, winner: winner.id, battleName: siegeName }), Date.now());
-
-    // Notify players
-    const siegeName = generateBattleName('SIEGE', { townName: town.name, attackerNation: atk.nation, defenderNation: def.nation, attackerRulerName: atk.ruler_name });
 
     for (const uid of [atkId, defId]) {
         const userObj = uid === atkId ? atk : def;
@@ -836,29 +850,6 @@ async function handleRaidWithdraw(interaction, battleData, isNow) {
     const atkRow = await db.get('SELECT * FROM users WHERE id=?', atkId);
     await db.run('UPDATE users SET mil_maintenance_cost=? WHERE id=?', calcMaintenance(atkRow), atkId);
 
-    const raidName = generateBattleName('RAID', { townName, attackerNation: atk.nation, attackerRulerName: atk.ruler_name });
-
-    // Notify both players via DM
-    for (const uid of [atkId, defId]) {
-        const isRaider = uid === atkId;
-        const emb = new EmbedBuilder()
-            .setTitle(`🗡️ ${raidName} — ${isRaider ? (isNow ? 'Withdrawn' : 'Complete') : 'Raided'}`)
-            .setColor(isRaider ? 0x00FF88 : 0xFF0000)
-            .setDescription([
-                `Raider: <@${atkId}> | Target: <@${defId}>`,
-                isRaider ? (
-                    isNow
-                        ? `Withdrew with reduced losses.\nLoot: **${loot} ⚖️**`
-                        : `Pressed the attack.\nLoot: **${loot} ⚖️**`
-                ) : `Raid against you concluded.\nLoot lost: **${loot} ⚖️**${defLosses > 0 ? `\n☠️ Pop loss: ${defLosses} commoners` : ''}`,
-            ].join('\n'));
-        await sendToPlayer(interaction.client, interaction, uid, { embeds: [emb] });
-    }
-
-    await db.run('INSERT INTO gm_events (user_id, gm_id, event_type, severity, effect_snapshot, created_at) VALUES (?,?,?,?,?,?)',
-        atkId, 'system', 'raid', 1, JSON.stringify({ atkId, defId, loot, atkLost, defLosses, isNow, townName }), Date.now());
-
-    await interaction.update({ components: [], content: `🗡️ Raid concluded. Loot: **${loot} ⚖️**.` });
 }
 
 // ─── REBELLION EVENT (exported for events.js) ───────────────────────────────────
@@ -870,9 +861,13 @@ async function handleBattleNameSubmit(interaction, atkId, defId, compArgs) {
     const atk = await db.get('SELECT * FROM users WHERE id=?', atkId);
     const def = await db.get('SELECT * FROM users WHERE id=?', defId);
 
+    // FIX: Extract compStr at function scope so it's available in BOTH branches
+    // compArgs comes from the modal customId args (everything after atkId_defId_)
+    const compStr = Array.isArray(compArgs) ? compArgs.join('_') : (compArgs || '');
+
     let battleName = nameInput;
     if (!battleName || battleName.length === 0) {
-        const compStr = (compArgs && compArgs.length > 0) ? compArgs[0] : '';
+        // Try to extract terrain from the comp string for auto-naming
         let terrainKey = 'PLAINS';
         if (compStr && compStr.includes('-')) {
             terrainKey = compStr.split('-')[8] || 'PLAINS';

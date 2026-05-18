@@ -380,7 +380,8 @@ async function handleButton(interaction, action, args) {
         // History
         if (sub === 'history') {
             await interaction.deferUpdate();
-            const duels = await db.all("SELECT * FROM duels WHERE status='completed' AND (challenger_id=? OR defender_id=?) ORDER BY id DESC LIMIT 10", uid, uid);
+            const histUserId = interaction.user.id; // FIX: uid not defined in handleButton scope
+            const duels = await db.all("SELECT * FROM duels WHERE status='completed' AND (challenger_id=? OR defender_id=?) ORDER BY id DESC LIMIT 10", histUserId, histUserId);
             const lines = duels.map(d => `**${d.name || 'Duel'}**: <@${d.challenger_id}> vs <@${d.defender_id}> — Winner: <@${d.winner_id}> | ${TERRAINS[d.terrain]?.name}`);
             return interaction.editReply({ embeds: [new EmbedBuilder().setTitle('📜 DUEL HISTORY').setColor(0xFFD700).setDescription(lines.join('\n') || 'No completed duels.')], components: [] });
         }
