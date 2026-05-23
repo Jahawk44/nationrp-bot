@@ -3,7 +3,7 @@ const {
     StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle
 } = require('discord.js');
 const { TERRAINS, DUEL_STANCES, DUEL_TERRAIN_MODS } = require('../../data/constants');
-const { calcMorale, getMod, sendToPlayer } = require('../../utils/helpers');
+const { calcMorale, getMod, sendToPlayer, safeReply } = require('../../utils/helpers');
 
 const hpBar = (hp) => '🟩'.repeat(Math.max(0, Math.min(10, hp))) + '🟥'.repeat(Math.max(0, 10 - Math.min(10, hp)));
 
@@ -228,7 +228,6 @@ async function handleSelect(interaction, action, args) {
 
         // My Duels: view details or start round
         if (sub === 'myduels') {
-            const uid = interaction.user.id;
             const val = interaction.values[0];
             if (val === 'none') return interaction.reply({ content: 'No duels found.', ephemeral: true });
             if (val.startsWith('cancel_')) {
@@ -377,6 +376,49 @@ async function handleButton(interaction, action, args) {
             return;
         }
 
+        // Rematch
+        if (sub === 'rematch') {
+            await interaction.deferReply({ ephemeral: true });
+            const challengerId = args[1];
+            const defenderId = args[2];
+            if (interaction.user.id !== challengerId && interaction.user.id !== defenderId)
+                return interaction.editReply({ content: '⚠️ Only duel participants may request a rematch.' });
+
+            const challenger = await db.get('SELECT * FROM users WHERE id=?', challengerId);
+            const defender   = await db.get('SELECT * FROM users WHERE id=?', defenderId);
+            if (!challenger || !defender) return interaction.editReply({ content: '⚠️ Player not found.' });
+
+            // Swap roles so loser gets to be challenger (initiator of rematch)
+            const newChp = challenger.hp_current || 10;
+            const newDhp = defender.hp_current   || 10;
+            const result = await db.run(
+                "INSERT INTO duels (challenger_id, defender_id, terrain, name, challenger_hp, defender_hp, status, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                challengerId, defenderId, 'PLAINS', pick(DUEL_PREFIXES) + ' ' + pick(DUEL_NOUNS) + ' (Rematch)',
+                newChp, newDhp, 'pending', Date.now()
+            );
+            const newDuelId = result.lastID;
+
+            // Post to colosseum
+            const coloChan = await interaction.client.channels.fetch(COLOSSEUM_CHANNEL).catch(() => null);
+            if (coloChan) {
+                await coloChan.send({ embeds: [new EmbedBuilder().setTitle('⚔️ REMATCH REQUESTED').setColor(0xFFD700)
+                    .setDescription([
+                        `<@${challengerId}> has called for a rematch against <@${defenderId}>!`,
+                        `⚤️ **Defender picks the terrain on acceptance.**`,
+                    ].join('\n'))],
+                    components: [new ActionRowBuilder().addComponents(
+                        new ButtonBuilder().setCustomId(`colo_accept_${newDuelId}`).setLabel('⚔️ Accept Rematch').setStyle(ButtonStyle.Success),
+                        new ButtonBuilder().setCustomId(`colo_reject_${newDuelId}`).setLabel('❌ Decline').setStyle(ButtonStyle.Danger)
+                    )]
+                });
+            }
+            await sendToPlayer(interaction.client, interaction, defenderId, {
+                embeds: [new EmbedBuilder().setTitle('⚔️ REMATCH REQUEST').setColor(0xFFD700)
+                    .setDescription(`<@${challengerId}> wants a rematch! Accept in the Colosseum channel.`)]
+            });
+            return interaction.editReply({ content: '⚔️ Rematch requested! Waiting for opponent.' });
+        }
+
         // History
         if (sub === 'history') {
             await interaction.deferUpdate();
@@ -398,32 +440,37 @@ async function handleButton(interaction, action, args) {
 
 async function handleStanceSelect(interaction, duelId, playerRole, chosenStance) {
     const db = interaction.client.db;
-    const stance = DUEL_STANCES[chosenStance];
-    if (!stance) return interaction.reply({ content: '⚠️ Invalid stance.', ephemeral: true });
+    try {
+        const stance = DUEL_STANCES[chosenStance];
+        if (!stance) return interaction.reply({ content: '⚠️ Invalid stance.', ephemeral: true });
 
-    const duel = await db.get('SELECT * FROM duels WHERE id=?', duelId);
-    if (!duel || duel.status !== 'active') return interaction.reply({ content: '⚠️ Duel not found.', ephemeral: true });
+        const duel = await db.get('SELECT * FROM duels WHERE id=?', duelId);
+        if (!duel || duel.status !== 'active') return interaction.reply({ content: '⚠️ Duel not found.', ephemeral: true });
 
-    const uid = interaction.user.id;
-    const isChallenger = playerRole === 'c';
-    if (isChallenger && uid !== duel.challenger_id) return interaction.reply({ content: '⚠️ Only the challenger may pick.', ephemeral: true });
-    if (!isChallenger && uid !== duel.defender_id) return interaction.reply({ content: '⚠️ Only the defender may pick.', ephemeral: true });
+        const uid = interaction.user.id;
+        const isChallenger = playerRole === 'c';
+        if (isChallenger && uid !== duel.challenger_id) return interaction.reply({ content: '⚠️ Only the challenger may pick.', ephemeral: true });
+        if (!isChallenger && uid !== duel.defender_id) return interaction.reply({ content: '⚠️ Only the defender may pick.', ephemeral: true });
 
-    // Store stance
-    if (isChallenger) {
-        await db.run('UPDATE duels SET challenger_stance=? WHERE id=?', chosenStance, duelId);
-    } else {
-        await db.run("UPDATE duels SET defender_stance=? WHERE id=?", chosenStance, duelId);
+        // Store stance
+        if (isChallenger) {
+            await db.run('UPDATE duels SET challenger_stance=? WHERE id=?', chosenStance, duelId);
+        } else {
+            await db.run("UPDATE duels SET defender_stance=? WHERE id=?", chosenStance, duelId);
+        }
+
+        await interaction.reply({ content: `✅ Stance locked: **${stance.name}**. Waiting for opponent...`, ephemeral: true });
+
+        // Check if both stances are in
+        const refreshed = await db.get('SELECT * FROM duels WHERE id=?', duelId);
+        if (!refreshed.challenger_stance || !refreshed.defender_stance) return;
+
+        // Both stances locked — resolve round
+        await resolveRound(db, interaction.client, refreshed, duelId);
+    } catch (e) {
+        console.error('[COLOSSEUM] handleStanceSelect error:', e.message);
+        await safeReply(interaction, '⚠️ Something went wrong resolving the round. Please try again.');
     }
-
-    await interaction.reply({ content: `✅ Stance locked: **${stance.name}**. Waiting for opponent...`, ephemeral: true });
-
-    // Check if both stances are in
-    const refreshed = await db.get('SELECT * FROM duels WHERE id=?', duelId);
-    if (!refreshed.challenger_stance || !refreshed.defender_stance) return;
-
-    // Both stances locked — resolve round
-    await resolveRound(db, interaction.client, refreshed, duelId);
 }
 
 async function resolveRound(db, client, duel, duelId) {
@@ -521,17 +568,15 @@ async function resolveRound(db, client, duel, duelId) {
             status === 'completed' ? `\n🏆 **${pick(ANNOUNCER_FINISH)}** — <@${winnerId}> is victorious!` : '',
         ].join('\n'));
 
-    // Post to colosseum
-    const coloChan = await client.channels.fetch(COLOSSEUM_CHANNEL).catch(() => null);
-    if (coloChan) await coloChan.send({ embeds: [emb] });
-
-    // DM both players
-    for (const uid of [duel.challenger_id, duel.defender_id]) {
-        await sendToPlayer(client, null, uid, { embeds: [emb] });
-    }
-
-    // If duel not over, send next round stance pick
+    // If duel not over, send plain embed now; if completed, the else block below sends with rematch button
     if (status === 'active') {
+        // Post round result to colosseum + DM both players
+        const coloChan = await client.channels.fetch(COLOSSEUM_CHANNEL).catch(() => null);
+        if (coloChan) await coloChan.send({ embeds: [emb] });
+        for (const uid of [duel.challenger_id, duel.defender_id]) {
+            await sendToPlayer(client, null, uid, { embeds: [emb] });
+        }
+        // Send stance pick for next round
         for (const uid of [duel.challenger_id, duel.defender_id]) {
             const stanceMenu = new StringSelectMenuBuilder()
                 .setCustomId(`colo_stance_${uid}_${duelId}_${uid === duel.challenger_id ? 'c' : 'd'}`)
@@ -545,8 +590,22 @@ async function resolveRound(db, client, duel, duelId) {
             });
         }
     } else {
-        // Payout bets
+        // Payout bets, then offer rematch
         await payoutBets(db, client, duelId, winnerId);
+        // Add rematch button to the result embed posted to the channel
+        const rematchRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(`colo_rematch_${duel.challenger_id}_${duel.defender_id}`)
+                .setLabel('⚔️ Rematch')
+                .setStyle(ButtonStyle.Primary)
+        );
+        const coloChan2 = await client.channels.fetch(COLOSSEUM_CHANNEL).catch(() => null);
+        if (coloChan2) await coloChan2.send({ embeds: [emb], components: [rematchRow] });
+        // DM both players with rematch option
+        for (const uid of [duel.challenger_id, duel.defender_id]) {
+            await sendToPlayer(client, null, uid, { embeds: [emb], components: [rematchRow] });
+        }
+        return; // already sent embed above, skip the duplicate send below
     }
 }
 

@@ -129,7 +129,7 @@ module.exports = {
         if (action === 'roll') {
             return await actionMod.handleButton(interaction, action, args);
         }
-        if (action === 'vitale' || action === 'ta' || action === 'td' || action.startsWith('tmodal') || action === 'empire') {
+        if (action === 'vitale' || action === 'ta' || action === 'td' || action.startsWith('tmodal') || action === 'empire' || action === 'trade') {
             return await economy.handleButton(interaction, action, args);
         }
         if (action === 'rebellion' || action === 'revolt') {
@@ -160,6 +160,10 @@ module.exports = {
         }
         if (action === 'colo' || action.startsWith('colo_')) {
             return await colosseum.handleButton(interaction, action, args);
+        }
+        if (action === 'traderoute') {
+            const trade = require('./atlas/trade');
+            return await trade.handleButton(interaction, action, args);
         }
     },
 

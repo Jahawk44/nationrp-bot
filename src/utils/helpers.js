@@ -228,6 +228,19 @@ async function getActivePlayers(db, excludeId) {
     return db.all("SELECT id, username, ruler_name, nation FROM users WHERE status='active' AND id!=?", excludeId);
 }
 
+/**
+ * safeReply — gracefully reply or editReply to a deferred/replied interaction.
+ * Use inside catch blocks for warfare/economy handlers.
+ */
+async function safeReply(interaction, options) {
+    try {
+        if (interaction.deferred || interaction.replied) {
+            return await interaction.editReply(typeof options === 'string' ? { content: options } : options);
+        }
+        return await interaction.reply(typeof options === 'string' ? { content: options, ephemeral: true } : options);
+    } catch (e) { console.error('[ATLAS] safeReply failed:', e.message); }
+}
+
 // ─── Army maintenance ─────────────────────────────────────────────────────────
 
 // Morale used by both warfare and colosseum systems
@@ -334,6 +347,8 @@ async function initDB(db) {
         'CREATE TABLE IF NOT EXISTS duels (id INTEGER PRIMARY KEY AUTOINCREMENT, challenger_id TEXT, defender_id TEXT, terrain TEXT, name TEXT, status TEXT DEFAULT "pending", challenger_hp INTEGER DEFAULT 10, defender_hp INTEGER DEFAULT 10, round INTEGER DEFAULT 0, challenger_stance TEXT, defender_stance TEXT, winner_id TEXT, created_at INTEGER)',
         'ALTER TABLE duels ADD COLUMN name TEXT',
         'CREATE TABLE IF NOT EXISTS bets (id INTEGER PRIMARY KEY AUTOINCREMENT, duel_id INTEGER, bettor_id TEXT, amount INTEGER, bet_on TEXT, odds REAL, payout INTEGER DEFAULT 0, created_at INTEGER)',
+        // pending_trades for one-time player trade consent flow
+        'CREATE TABLE IF NOT EXISTS pending_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, initiator_id TEXT, partner_id TEXT, give_resource TEXT, give_amount INTEGER, recv_resource TEXT, recv_amount INTEGER, status TEXT DEFAULT "pending", created_at INTEGER)',
     ];
     for (const sql of newTables) {
         try { await db.run(sql); } catch (_) {}
@@ -427,6 +442,7 @@ module.exports = {
     getWarningLevel, formatWarningBanner,
     getPlayerRank, isVitaleFree, getNotificationChannel,
     sendToPlayer, getActivePlayers,
+    safeReply,
     calcMorale,
     calcMaintenance,
     initDB, STAT_MAPPING,

@@ -156,6 +156,10 @@ async function handleButton(interaction, action, args) {
         const bType = args.slice(1).join('_');
         await interaction.deferUpdate();
         const bData = BUILDINGS[bType];
+        if (!bData) return interaction.editReply({ content: '⚠️ Invalid building type.', components: [] });
+        const user = await db.get('SELECT wealth FROM users WHERE id=?', interaction.user.id);
+        if ((user.wealth || 0) < bData.cost)
+            return interaction.editReply({ content: `⚠️ Insufficient Wealth. Need **${bData.cost} ⚖️**, you have **${user.wealth || 0} ⚖️**.`, components: [] });
         await db.run('UPDATE users SET wealth = wealth - ? WHERE id = ?', bData.cost, interaction.user.id);
         const readyAt = Date.now() + 3600000;
         await db.run('INSERT INTO buildings (town_id, type, level, ready_at) VALUES (?, ?, 1, ?)', townId, bType.toLowerCase(), readyAt);
@@ -169,14 +173,16 @@ async function handleButton(interaction, action, args) {
         const bData = BUILDINGS[bType];
         if (!bData || !bData.upgrade_from) return interaction.editReply({ content: '⚠️ Invalid upgrade.', components: [] });
 
+        // Wealth gate — prevent going into debt
+        const user = await db.get('SELECT wealth FROM users WHERE id=?', interaction.user.id);
+        if ((user.wealth || 0) < bData.cost)
+            return interaction.editReply({ content: `⚠️ Insufficient Wealth. Need **${bData.cost} ⚖️**, you have **${user.wealth || 0} ⚖️**.`, components: [] });
+
         // Check plot space
         const town = await db.get('SELECT * FROM towns WHERE id=?', townId);
-        const bldgs = await db.get('SELECT COUNT(*) as cnt FROM buildings WHERE town_id=?', townId);
         const oldPlots = BUILDINGS[bData.upgrade_from]?.plots || 0;
         const newPlots = bData.plots || 0;
         if (town && town.plots_total) {
-            // Estimate: since we can't easily sum all plots, just check the new building doesn't exceed
-            // Better: count all buildings and their plots
             const allBldgs = await db.all('SELECT type FROM buildings WHERE town_id=?', townId);
             let plotsUsed = 0;
             for (const b of allBldgs) {

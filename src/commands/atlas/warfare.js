@@ -121,12 +121,14 @@ async function handleBattleInitiate(interaction) {
         .setCustomId(`warcomp_${atk.id}_${def.id}`)
         .setTitle('⚔️ Commit Forces');
 
+    // 5-field format: militia (all infantry combined), cavalry, ranged, siege, mercs
+    const totalMilitia = (atk.mil_militia||0)+(atk.mil_spearmen||0)+(atk.mil_swordsman||0)+(atk.mil_shield||0);
     const fields = [
-        { id: 'inf', label: 'Infantry', max: atk.mil_infantry || 0 },
-        { id: 'cav', label: 'Cavalry', max: atk.mil_cavalry || 0 },
-        { id: 'rng', label: 'Ranged', max: atk.mil_ranged || 0 },
-        { id: 'sie', label: 'Siege', max: atk.mil_siege || 0 },
-        { id: 'mercs', label: 'Mercenaries', max: atk.mercs_temp || 0 },
+        { id: 'mil_militia', label: 'Infantry (Militia/Spearmen/Sword/Shield)', max: totalMilitia },
+        { id: 'mil_cavalry', label: 'Cavalry', max: atk.mil_cavalry || 0 },
+        { id: 'mil_ranged',  label: 'Ranged', max: atk.mil_ranged || 0 },
+        { id: 'mil_siege',   label: 'Siege', max: atk.mil_siege || 0 },
+        { id: 'mercs_temp',  label: 'Mercenaries', max: atk.mercs_temp || 0 },
     ];
 
     for (const f of fields) {
@@ -145,23 +147,27 @@ async function handleBattleInitiate(interaction) {
 }
 
 function fieldFoodCostFor(counts) {
-    return ((counts.inf || 0) + (counts.cav || 0) + (counts.rng || 0) + (counts.mercs || 0)) * 2;
+    return ((counts.mil_militia || 0) + (counts.mil_cavalry || 0) + (counts.mil_ranged || 0) + (counts.mil_siege || 0) + (counts.mercs_temp || 0)) * 2;
 }
 
 async function handleBattleCompositionSubmit(interaction, atkId, defId) {
     const db = interaction.client.db;
+    try {
     const atk = await db.get('SELECT * FROM users WHERE id=?', atkId);
     const def = await db.get('SELECT * FROM users WHERE id=?', defId);
     if (!atk || !def) return interaction.reply({ content: '⚠️ Data not found.', ephemeral: true });
 
-    const cols = ['mil_militia','mil_spearmen','mil_swordsman','mil_shield','mil_cavalry','mil_ranged','mil_siege','mercs_temp'];
+    // 5-field format matching modal IDs: mil_militia (all infantry), mil_cavalry, mil_ranged, mil_siege, mercs_temp
+    const cols = ['mil_militia', 'mil_cavalry', 'mil_ranged', 'mil_siege', 'mercs_temp'];
     const counts = {};
     let totalFoodCost = 0;
+    // Combined infantry pool for validation
+    const totalMilitia = (atk.mil_militia||0)+(atk.mil_spearmen||0)+(atk.mil_swordsman||0)+(atk.mil_shield||0);
     for (const col of cols) {
         let val = 0;
         try { val = parseInt(interaction.fields.getTextInputValue(col)) || 0; } catch (e) {}
         if (val < 0) return interaction.reply({ content: '⚠️ Values must be 0 or positive.', ephemeral: true });
-        const max = atk[col] || 0;
+        const max = col === 'mil_militia' ? totalMilitia : (atk[col] || 0);
         if (val > max) return interaction.reply({ content: `⚠️ Cannot commit more ${col} than you own (max ${max}).`, ephemeral: true });
         counts[col] = val;
         totalFoodCost += val * 2;
@@ -176,8 +182,8 @@ async function handleBattleCompositionSubmit(interaction, atkId, defId) {
     const terrainKeys = Object.keys(TERRAINS);
     const terrainKey = terrainKeys[Math.floor(Math.random() * terrainKeys.length)];
     const terrain = TERRAINS[terrainKey];
+    // compStr: 5 counts + terrain (hyphen-delimited, terrain always last)
     const compStr = cols.map(c => counts[c]).join('-') + '-' + terrainKey;
-    const totalInf = counts.mil_militia + counts.mil_spearmen + counts.mil_swordsman + counts.mil_shield;
     const emb = new EmbedBuilder()
         .setTitle('⚔️ BATTLE REQUEST')
         .setColor(0xFF4400)
@@ -188,7 +194,7 @@ async function handleBattleCompositionSubmit(interaction, atkId, defId) {
             '',
             `🌍 **Terrain:** ${terrain?.name || terrainKey}`,
             '',
-            `⚔️ Inf: ${totalInf} | 🐎 Cav: ${counts.mil_cavalry} | 🏹 Rng: ${counts.mil_ranged} | 🪨 Sie: ${counts.mil_siege} | 🗡️ Mercs: ${counts.mercs_temp}`,
+            `⚔️ Inf: ${counts.mil_militia} | 🐎 Cav: ${counts.mil_cavalry} | 🏹 Rng: ${counts.mil_ranged} | 🪨 Sie: ${counts.mil_siege} | 🗡️ Mercs: ${counts.mercs_temp}`,
             `🔥 Morale: ${calcMorale(atk)} | 🥩 Food: ${foodCost}`,
         ].join('\n'));
 
@@ -198,7 +204,12 @@ async function handleBattleCompositionSubmit(interaction, atkId, defId) {
     );
     await resolveAtlasHQ(interaction.client, emb, [row]);
     return interaction.reply({ content: `⚔️ Battle request submitted. **${foodCost} 🥩** supply spent. Awaiting GM approval.`, ephemeral: true });
+    } catch (e) {
+        console.error('[WARFARE] handleBattleCompositionSubmit error:', e.message);
+        return interaction.reply({ content: '⚠️ Battle request failed. Please try again.', ephemeral: true });
+    }
 }
+
 
 // ─── BATTLE APPROVE (GM) ───────────────────────────────────────────────────────
 
@@ -210,10 +221,21 @@ async function handleBattleApprove(interaction, atkId, defId, compArgs, battleNa
     const def = await db.get('SELECT * FROM users WHERE id=?', defId);
     if (!atk || !def) return interaction.reply({ content: '⚠️ One or both players not found.', ephemeral: true });
 
-    // Parse attacker composition
-    const compParts = typeof compArgs === 'string' ? compArgs.split('-') : [`${atk.mil_militia || 0}`, `${atk.mil_spearmen || 0}`, `${atk.mil_swordsman || 0}`, `${atk.mil_shield || 0}`, `${atk.mil_cavalry || 0}`, `${atk.mil_ranged || 0}`, `${atk.mil_siege || 0}`, `${atk.mercs_temp || 0}`, 'PLAINS'];
-    const atkComp = compParts.slice(0, 8).join('-');
-    const terrainKey = compParts[8] || 'PLAINS';
+    // Parse attacker composition — supports 5-field (direct modal) or 8-field (formation flow)
+    const compParts = typeof compArgs === 'string' ? compArgs.split('-') : [];
+    const isEightField = compParts.length >= 9; // 8 counts + terrain
+    const isFiveField  = compParts.length >= 6; // 5 counts + terrain
+    let atkComp, terrainKey;
+    if (isEightField) {
+        atkComp = compParts.slice(0, 8).join('-');
+        terrainKey = compParts[8] || 'PLAINS';
+    } else if (isFiveField) {
+        atkComp = compParts.slice(0, 5).join('-');
+        terrainKey = compParts[5] || 'PLAINS';
+    } else {
+        atkComp = `${atk.mil_militia||0}-${atk.mil_cavalry||0}-${atk.mil_ranged||0}-${atk.mil_siege||0}-${atk.mercs_temp||0}`;
+        terrainKey = 'PLAINS';
+    }
     const terrain = TERRAINS[terrainKey.toUpperCase()] || TERRAINS['PLAINS'];
 
     await interaction.update({ components: [], content: `⚔️ Battle approved. Awaiting <@${defId}> to commit forces...` });
@@ -850,6 +872,32 @@ async function handleRaidWithdraw(interaction, battleData, isNow) {
     const atkRow = await db.get('SELECT * FROM users WHERE id=?', atkId);
     await db.run('UPDATE users SET mil_maintenance_cost=? WHERE id=?', calcMaintenance(atkRow), atkId);
 
+    // ── FIX 1: Emit raid result embed ──────────────────────────────────────────
+    const phase = isNow ? 'Withdrew' : 'Pressed Attack';
+    const atkEmb = new EmbedBuilder()
+        .setTitle(loot > 0 ? '🗡️ RAID COMPLETE — LOOT SECURED' : '🗡️ RAID WITHDRAWN')
+        .setColor(loot > 0 ? 0x00FF88 : 0xAAAAAA)
+        .setDescription([
+            `**Action:** ${phase}`,
+            '',
+            `**Casualties:**`,
+            `Inf: ${atkLost.inf} | 🐎 Cav: ${atkLost.cav} | 🏹 Rng: ${atkLost.rng} | 🪨 Sie: ${atkLost.sie} | 🗡️ Mercs: ${atkLost.mercs}`,
+            '',
+            loot > 0 ? `💰 **Loot:** ${loot} ⚖️ plundered from <@${defId}>` : '💀 No loot secured.',
+            defLosses > 0 ? `☠️ Defender casualties: ${defLosses} commoners` : '',
+        ].filter(Boolean).join('\n'));
+    await interaction.update({ embeds: [atkEmb], components: [] });
+
+    // Notify defender
+    const defEmb = new EmbedBuilder()
+        .setTitle('🚨 YOUR TERRITORY WAS RAIDED')
+        .setColor(0xFF4400)
+        .setDescription([
+            `<@${atkId}> raided your territory!`,
+            loot > 0 ? `💰 They plundered **${loot} ⚖️** from your treasury.` : '',
+            defLosses > 0 ? `☠️ ${defLosses} commoners were lost.` : '',
+        ].filter(Boolean).join('\n'));
+    await sendToPlayer(interaction.client, interaction, defId, { embeds: [defEmb] });
 }
 
 // ─── REBELLION EVENT (exported for events.js) ───────────────────────────────────

@@ -101,7 +101,7 @@ async function handleSelect(interaction, action, args) {
                 if (!check) return interaction.reply({ content: `⚠️ You need **${def.requires}** to recruit ${def.name}.`, ephemeral: true });
             }
 
-            const cost = unitType.toUpperCase() === 'MERCENARY' ? 500 : def.cost_balance;
+            const cost = unitType.toUpperCase() === 'MERCENARY' ? 150 : def.cost_balance;
             const modal = new ModalBuilder()
                 .setCustomId(`mil_recruitmod_${uid}_${unitType}`)
                 .setTitle(`⚔️ Recruit ${def?.name || 'Mercenaries'}`);
@@ -214,7 +214,7 @@ async function handleModal(interaction, action, args) {
         const user = await db.get('SELECT * FROM users WHERE id=?', uid);
 
         if (unitType === 'MERCENARY') {
-            const cost = amt * 500;
+            const cost = amt * 150;
             if ((user.balance||0) < cost) return interaction.reply({ content: `⚠️ Need ${cost} :coin:.`, ephemeral: true });
             await db.run('UPDATE users SET balance=balance-?, mercs_temp=COALESCE(mercs_temp,0)+? WHERE id=?', cost, amt, uid);
             return interaction.reply({ content: `🗡️ Hired **${amt} mercenaries** for ${cost} :coin:.\n*${MERC_DESC}*`, ephemeral: true });
@@ -295,7 +295,7 @@ async function showRecruitMenu(interaction, uid, db) {
             label: `${v.emoji} ${v.name} (${v.cost_balance}:coin: each)`,
             value: k.toLowerCase(),
             description: v.requires ? `Requires: ${v.requires}` : 'No building required'
-        })).concat({ label: '🗡️ Mercenary (500:coin: each)', value: 'mercenary', description: 'Expires at turn end' }));
+        })).concat({ label: '🗡️ Mercenary (150:coin: each)', value: 'mercenary', description: 'Expires at turn end. No barracks needed.' }));
     return interaction.editReply({ embeds: [new EmbedBuilder().setTitle('⚔️ RECRUIT').setColor(0xFF4400)
         .setDescription(`Pop: ${user.pop_commoners||0} | Balance: ${user.balance||0} :coin: | 🔩: ${user.metallurgy||0}`)], components: [new ActionRowBuilder().addComponents(menu), backRow(uid)] });
 }

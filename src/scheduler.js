@@ -92,12 +92,17 @@ function initScheduler(client) {
                 }
 
                 let delta = 0;
-                if (food > 0 && currentPop < popCap) {
-                    delta = Math.max(1, Math.floor(currentPop * 0.01));
-                    delta = Math.min(delta, popCap - currentPop); // don't exceed cap
+                // Tiered pop growth based on food surplus level
+                if (food >= 1000 && currentPop < popCap) {
+                    delta = Math.max(1, Math.floor(currentPop * 0.02));   // Abundant: 2%/day
+                } else if (food >= 200 && currentPop < popCap) {
+                    delta = Math.max(1, Math.floor(currentPop * 0.015));  // Comfortable: 1.5%/day
+                } else if (food > 0 && currentPop < popCap) {
+                    delta = Math.max(1, Math.floor(currentPop * 0.01));   // Subsisting: 1%/day
                 } else if (food <= 0) {
-                    delta = -Math.max(1, Math.floor(currentPop * 0.01)); // famine
+                    delta = -Math.max(1, Math.floor(currentPop * 0.01));  // Famine: -1%/day
                 }
+                delta = Math.min(delta, popCap - currentPop); // don't exceed cap
 
                 // ── Military maintenance ─────────────────────────────────────
                 // FIXED: Use calcMaintenance() against actual mil_* columns.
@@ -133,6 +138,10 @@ function initScheduler(client) {
                         }
                     }
                 }
+
+                // ── Food rot: 5%/day — surplus decays to prevent infinite hoarding ──
+                // Applied after military maintenance. Min 0.
+                foodAfterMil = Math.max(0, Math.floor(foodAfterMil * 0.95));
 
                 // Calculate new maintenance cost after potential desertions
                 const postDesertion = {
