@@ -9,6 +9,10 @@ const {
     resolveAtlasHQ, GREAT_HOUSES, sendToPlayer, getActivePlayers, safeReply
 } = require('../../utils/helpers');
 
+// Resource name encoding for customIds (food_surplus has an underscore that breaks parsing)
+const encRes = r => r.replace('_surplus', 'SRP');
+const decRes = r => r.replace('SRP', '_surplus');
+
 async function handleTax(interaction) {
     const db = interaction.client.db;
     const userId = interaction.user.id;
@@ -507,8 +511,8 @@ async function handleModal(interaction, action, args) {
     if (action === 'trade' && args[0] === 'onedonemod') {
         const userId = args[1];
         const partnerId = args[2];
-        const giveRes = args[3];
-        const recvRes = args[4];
+        const giveRes = decRes(args[3]);  // decode encoded resource name
+        const recvRes = decRes(args[4]);
         const giveAmt = parseInt(interaction.fields.getTextInputValue('give_amt'));
         const recvAmt = parseInt(interaction.fields.getTextInputValue('recv_amt'));
         if (isNaN(giveAmt) || giveAmt <= 0 || isNaN(recvAmt) || recvAmt <= 0)
@@ -544,8 +548,8 @@ async function handleModal(interaction, action, args) {
     if (action === 'trade' && args[0] === 'newplayer' && args[1] === 'mod') {
         const initiatorId = args[2];
         const partnerId   = args[3];
-        const giveRes     = args[4];
-        const recvRes     = args[5];
+        const giveRes     = decRes(args[4]);  // decode
+        const recvRes     = decRes(args[5]);
         const giveAmt  = parseInt(interaction.fields.getTextInputValue('give_amt'));
         const recvAmt  = parseInt(interaction.fields.getTextInputValue('recv_amt'));
         const duration = Math.min(10, Math.max(1, parseInt(interaction.fields.getTextInputValue('duration')) || 1));
@@ -581,8 +585,8 @@ async function handleModal(interaction, action, args) {
     if (action === 'trade' && args[0] === 'facmod') {
         const userId = args[1];
         const faction = args[2];
-        const giveRes = args[3];
-        const recvRes = args[4];
+        const giveRes = decRes(args[3]);  // decode encoded resource
+        const recvRes = decRes(args[4]);
         const giveAmt = parseInt(interaction.fields.getTextInputValue('give_amt'));
         if (isNaN(giveAmt) || giveAmt <= 0)
             return interaction.reply({ content: '⚠️ Invalid input.', ephemeral: true });
@@ -713,26 +717,26 @@ async function handleSelect(interaction, action, args) {
             { label: '🍷 Exotics', value: 'exotics' },
         ].filter(o => o.value !== giveRes);
         const recvMenu = new StringSelectMenuBuilder()
-            .setCustomId(`trade_odrecv_${userId}_${partnerId}_${giveRes}`)
+            .setCustomId(`trade_odrecv_${userId}_${partnerId}_${encRes(giveRes)}`)
             .setPlaceholder('What do you WANT in return?')
             .addOptions(RESOURCE_OPTIONS);
-        return interaction.editReply({ embeds: [new EmbedBuilder().setTitle('🤝 ONE-TIME TRADE').setColor(0x00BFFF).setDescription(`Trading with <@${partnerId}>\nYou give: **${giveRes.replace('_surplus','')}**\n\n**Step 2:** What resource do you want?`)], components: [new ActionRowBuilder().addComponents(recvMenu)] });
+        return interaction.editReply({ embeds: [new EmbedBuilder().setTitle('🤝 ONE-TIME TRADE').setColor(0x00BFFF).setDescription(`Trading with <@${partnerId}>\nYou give: **${giveRes.replace('_surplus',' (Food)')}**\n\n**Step 2:** What resource do you want?`)], components: [new ActionRowBuilder().addComponents(recvMenu)] });
     }
 
     // One-time trade: recv-resource selected → show amounts modal
     if (action === 'trade' && args[0] === 'odrecv') {
         const userId = args[1];
         const partnerId = args[2];
-        const giveRes = args[3];
+        const giveRes = decRes(args[3]);  // decode — may have been encoded as foodSRP
         const recvRes = interaction.values[0];
         if (interaction.user.id !== userId) return interaction.reply({ content: '⚠️ Only the player who opened this may use it.', ephemeral: true });
         const user = await db.get('SELECT * FROM users WHERE id=?', userId);
         const modal = new ModalBuilder()
-            .setCustomId(`trade_onedonemod_${userId}_${partnerId}_${giveRes}_${recvRes}`)
+            .setCustomId(`trade_onedonemod_${userId}_${partnerId}_${encRes(giveRes)}_${encRes(recvRes)}`)
             .setTitle('🤝 Trade Amounts');
         modal.addComponents(
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('give_amt').setLabel(`Amount of ${giveRes.replace('_surplus','')} to give (you have ${user[giveRes]||0})`).setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('100')),
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('recv_amt').setLabel(`Amount of ${recvRes.replace('_surplus','')} to request`).setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('50'))
+            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('give_amt').setLabel(`${giveRes.replace('_surplus',' (Food)')} to give (you have ${user[giveRes]||0})`).setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('100')),
+            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('recv_amt').setLabel(`${recvRes.replace('_surplus',' (Food)')} to request`).setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('50'))
         );
         return await interaction.showModal(modal);
     }
@@ -811,25 +815,25 @@ async function handleSelect(interaction, action, args) {
             { label: '🍷 Exotics', value: 'exotics' },
         ].filter(o => o.value !== giveRes);
         const recvMenu = new StringSelectMenuBuilder()
-            .setCustomId(`trade_plrrecv_${initiatorId}_${partnerId}_${giveRes}`)
+            .setCustomId(`trade_plrrecv_${initiatorId}_${partnerId}_${encRes(giveRes)}`)
             .setPlaceholder('What will you RECEIVE each turn?')
             .addOptions(ROUTE_RESOURCES);
-        return interaction.editReply({ embeds: [new EmbedBuilder().setTitle('📨 PLAYER TRADE ROUTE').setColor(0x00BFFF).setDescription(`Route with <@${partnerId}>\nYou give: **${giveRes.replace('_surplus','')}**\n\n**Step 2:** What resource will you receive?`)], components: [new ActionRowBuilder().addComponents(recvMenu)] });
+        return interaction.editReply({ embeds: [new EmbedBuilder().setTitle('📨 PLAYER TRADE ROUTE').setColor(0x00BFFF).setDescription(`Route with <@${partnerId}>\nYou give: **${giveRes.replace('_surplus',' (Food)')}**\n\n**Step 2:** What resource will you receive?`)], components: [new ActionRowBuilder().addComponents(recvMenu)] });
     }
 
     // Player route: recv selected → amounts+duration modal
     if (action === 'trade' && args[0] === 'plrrecv') {
         const initiatorId = args[1];
         const partnerId = args[2];
-        const giveRes = args[3];
+        const giveRes = decRes(args[3]);  // decode
         const recvRes = interaction.values[0];
         if (interaction.user.id !== initiatorId) return interaction.reply({ content: '⚠️ Only the player who opened this may use it.', ephemeral: true });
         const modal = new ModalBuilder()
-            .setCustomId(`trade_newplayer_mod_${initiatorId}_${partnerId}_${giveRes}_${recvRes}`)
+            .setCustomId(`trade_newplayer_mod_${initiatorId}_${partnerId}_${encRes(giveRes)}_${encRes(recvRes)}`)
             .setTitle('📨 Route Amounts');
         modal.addComponents(
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('give_amt').setLabel(`${giveRes.replace('_surplus','')} to give per turn`).setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('100')),
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('recv_amt').setLabel(`${recvRes.replace('_surplus','')} to receive per turn`).setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('50')),
+            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('give_amt').setLabel(`${giveRes.replace('_surplus',' (Food)')} to give per turn`).setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('100')),
+            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('recv_amt').setLabel(`${recvRes.replace('_surplus',' (Food)')} to receive per turn`).setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('50')),
             new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('duration').setLabel('Duration (1-10 turns)').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('3'))
         );
         return await interaction.showModal(modal);
@@ -863,7 +867,7 @@ async function handleSelect(interaction, action, args) {
 
         await interaction.deferUpdate();
         const resMenu = new StringSelectMenuBuilder()
-            .setCustomId(`trade_facrecv_${userId}_${faction}_${giveRes}`)
+            .setCustomId(`trade_facrecv_${userId}_${faction}_${encRes(giveRes)}`)
             .setPlaceholder('Select resource you WANT...')
             .addOptions([
                 { label: '💰 Balance', value: 'balance' },
@@ -880,7 +884,7 @@ async function handleSelect(interaction, action, args) {
     if (action === 'trade' && args[0] === 'facrecv') {
         const userId = args[1];
         const faction = args[2];
-        const giveRes = args[3];
+        const giveRes = decRes(args[3]);  // decode
         const recvRes = interaction.values[0];
         if (interaction.user.id !== userId) return interaction.reply({ content: '⚠️ Only the player who opened this may use it.', ephemeral: true });
 
@@ -917,7 +921,7 @@ async function handleSelect(interaction, action, args) {
             .setDescription(previewLines.join('\n'));
 
         const confirmBtn = new ButtonBuilder()
-            .setCustomId(`trade_facconfirm_${userId}_${faction}_${giveRes}_${recvRes}`)
+            .setCustomId(`trade_facconfirm_${userId}_${faction}_${encRes(giveRes)}_${encRes(recvRes)}`)
             .setLabel('📋 Enter Amount →')
             .setStyle(ButtonStyle.Primary);
 
@@ -928,14 +932,14 @@ async function handleSelect(interaction, action, args) {
     if (action === 'trade' && args[0] === 'facconfirm') {
         const userId = args[1];
         const faction = args[2];
-        const giveRes = args[3];
-        const recvRes = args[4];
+        const giveRes = decRes(args[3]);  // decode
+        const recvRes = decRes(args[4]);
         if (interaction.user.id !== userId) return interaction.reply({ content: '⚠️ Only the player who opened this may use it.', ephemeral: true });
         const modal = new ModalBuilder()
-            .setCustomId(`trade_facmod_${userId}_${faction}_${giveRes}_${recvRes}`)
-            .setTitle(`Give ${giveRes.replace('_surplus','')} for ${recvRes.replace('_surplus','')}`);
+            .setCustomId(`trade_facmod_${userId}_${faction}_${encRes(giveRes)}_${encRes(recvRes)}`)
+            .setTitle(`Give ${giveRes.replace('_surplus',' (Food)')} for ${recvRes.replace('_surplus',' (Food)')}`);
         modal.addComponents(
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('give_amt').setLabel(`Amount of ${giveRes.replace('_surplus','')} to give`).setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('100'))
+            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('give_amt').setLabel(`Amount of ${giveRes.replace('_surplus',' (Food)')} to give`).setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('100'))
         );
         return await interaction.showModal(modal);
     }
