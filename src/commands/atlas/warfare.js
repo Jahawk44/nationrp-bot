@@ -182,8 +182,18 @@ async function handleBattleCompositionSubmit(interaction, atkId, defId) {
     const terrainKeys = Object.keys(TERRAINS);
     const terrainKey = terrainKeys[Math.floor(Math.random() * terrainKeys.length)];
     const terrain = TERRAINS[terrainKey];
-    // compStr: 5 counts + terrain (hyphen-delimited, terrain always last)
-    const compStr = cols.map(c => counts[c]).join('-') + '-' + terrainKey;
+    // 8-field format: militia-spearmen-swordsman-shield-cavalry-ranged-siege-mercs-TERRAIN
+    // Modal collects infantry as a combined pool; spear/sword/shield are zeroed here.
+    // handleBattleResolve always expects 8 unit fields + terrain as the 9th part.
+    const combined = counts['mil_militia'];  // all infantry
+    const compStr = [
+        combined, 0, 0, 0,
+        counts['mil_cavalry'],
+        counts['mil_ranged'],
+        counts['mil_siege'],
+        counts['mercs_temp'],
+        terrainKey
+    ].join('-');
     const emb = new EmbedBuilder()
         .setTitle('⚔️ BATTLE REQUEST')
         .setColor(0xFF4400)
@@ -221,19 +231,15 @@ async function handleBattleApprove(interaction, atkId, defId, compArgs, battleNa
     const def = await db.get('SELECT * FROM users WHERE id=?', defId);
     if (!atk || !def) return interaction.reply({ content: '⚠️ One or both players not found.', ephemeral: true });
 
-    // Parse attacker composition — supports 5-field (direct modal) or 8-field (formation flow)
+    // Parse attacker composition — always 8-field format: militia-spear-sword-shield-cav-rng-sie-mercs-TERRAIN
     const compParts = typeof compArgs === 'string' ? compArgs.split('-') : [];
-    const isEightField = compParts.length >= 9; // 8 counts + terrain
-    const isFiveField  = compParts.length >= 6; // 5 counts + terrain
     let atkComp, terrainKey;
-    if (isEightField) {
+    if (compParts.length >= 9) {
         atkComp = compParts.slice(0, 8).join('-');
         terrainKey = compParts[8] || 'PLAINS';
-    } else if (isFiveField) {
-        atkComp = compParts.slice(0, 5).join('-');
-        terrainKey = compParts[5] || 'PLAINS';
     } else {
-        atkComp = `${atk.mil_militia||0}-${atk.mil_cavalry||0}-${atk.mil_ranged||0}-${atk.mil_siege||0}-${atk.mercs_temp||0}`;
+        // Fallback: build from current DB values (should not normally occur)
+        atkComp = `${atk.mil_militia||0}-0-0-0-${atk.mil_cavalry||0}-${atk.mil_ranged||0}-${atk.mil_siege||0}-${atk.mercs_temp||0}`;
         terrainKey = 'PLAINS';
     }
     const terrain = TERRAINS[terrainKey.toUpperCase()] || TERRAINS['PLAINS'];
@@ -915,12 +921,10 @@ async function handleBattleNameSubmit(interaction, atkId, defId, compArgs) {
 
     let battleName = nameInput;
     if (!battleName || battleName.length === 0) {
-        // Try to extract terrain from the comp string for auto-naming
+        // Extract terrain from index 8 (8-field standard: terrain is always compParts[8])
         let terrainKey = 'PLAINS';
         if (compStr && compStr.includes('-')) {
             terrainKey = compStr.split('-')[8] || 'PLAINS';
-        } else if (compArgs && compArgs.length >= 6) {
-            terrainKey = compArgs[5] || 'PLAINS';
         }
         const safeTerrainKey = terrainKey || 'PLAINS';
         const terrain = TERRAINS[safeTerrainKey.toUpperCase()] || TERRAINS['PLAINS'];

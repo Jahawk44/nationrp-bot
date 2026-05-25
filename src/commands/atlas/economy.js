@@ -418,10 +418,10 @@ async function renderEmpireEmbed(db) {
 async function handleButton(interaction, action, args) {
     const db = interaction.client.db;
 
-    // Trade: "Set What You Give" button
+    // Trade: "Set What You Give" button → opens give-modal
     if (action === 'tmodalg') {
         const targetId = args[0];
-        const modal = new ModalBuilder().setCustomId(`tmodalgm_${targetId}`).setTitle('🎁 Set What You Give');
+        const modal = new ModalBuilder().setCustomId(`tmodalg_${targetId}`).setTitle('🎁 Set What You Give');
         modal.addComponents(
             new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('res').setLabel('Resource (wealth, food_surplus, etc)').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('wealth')),
             new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('amt').setLabel('Amount').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('100'))
@@ -429,10 +429,10 @@ async function handleButton(interaction, action, args) {
         return await interaction.showModal(modal);
     }
 
-    // Trade: "Set What You Request" button
+    // Trade: "Set What You Request" button → opens request-modal
     if (action === 'tmodalr') {
         const targetId = args[0];
-        const modal = new ModalBuilder().setCustomId(`tmodalrm_${targetId}`).setTitle('🤝 Set What You Request');
+        const modal = new ModalBuilder().setCustomId(`tmodalr_${targetId}`).setTitle('🤝 Set What You Request');
         modal.addComponents(
             new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('res').setLabel('Resource (wealth, food_surplus, etc)').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('food_surplus')),
             new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('amt').setLabel('Amount').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('50'))
@@ -501,6 +501,30 @@ async function handleButton(interaction, action, args) {
             content: `❌ <@${trade.partner_id}> declined your trade offer.`
         });
         return;
+    }
+    // Faction trade: "Enter Amount" button → opens the give-amount modal
+    // (action='trade', args=['facconfirm', userId, faction, encRes(giveRes), encRes(recvRes)])
+    if (action === 'trade' && args[0] === 'facconfirm') {
+        const userId  = args[1];
+        const faction = args[2];
+        const giveRes = decRes(args[3]);
+        const recvRes = decRes(args[4]);
+        if (interaction.user.id !== userId)
+            return interaction.reply({ content: '⚠️ Only the player who opened this may use it.', ephemeral: true });
+        const modal = new ModalBuilder()
+            .setCustomId(`trade_facmod_${userId}_${faction}_${encRes(giveRes)}_${encRes(recvRes)}`)
+            .setTitle(`Give ${giveRes.replace('_surplus', ' (Food)')} for ${recvRes.replace('_surplus', ' (Food)')}`);
+        modal.addComponents(
+            new ActionRowBuilder().addComponents(
+                new TextInputBuilder()
+                    .setCustomId('give_amt')
+                    .setLabel(`Amount of ${giveRes.replace('_surplus', ' (Food)')} to give`)
+                    .setStyle(TextInputStyle.Short)
+                    .setRequired(true)
+                    .setPlaceholder('100')
+            )
+        );
+        return await interaction.showModal(modal);
     }
 }
 
@@ -611,32 +635,22 @@ async function handleModal(interaction, action, args) {
         return interaction.reply({ content: `✅ Trade route established with **${faction.charAt(0).toUpperCase() + faction.slice(1)}**! Give ${giveAmt} ${giveRes.replace('_surplus','')} → receive ${recvRes.replace('_surplus','')} from them. Use \`/atlas trade\` to manage routes.`, ephemeral: true });
     }
 
-    // Trade: Give modal submit
-    if (action === 'tmodalgm') {
-        const targetId = args[0];
+    // Trade: Give modal submit (action = 'tmodalg', args[0] = targetId)
+    if (action === 'tmodalg') {
         const res = interaction.fields.getTextInputValue('res')?.trim().toLowerCase();
         const amt = parseInt(interaction.fields.getTextInputValue('amt'));
         if (!res || isNaN(amt) || amt <= 0) return interaction.reply({ content: '⚠️ Invalid input.', ephemeral: true });
         const user = await db.get('SELECT * FROM users WHERE id=?', interaction.user.id);
         if ((user[res] || 0) < amt) return interaction.reply({ content: `⚠️ Insufficient ${res}.`, ephemeral: true });
-
-        return interaction.reply({
-            content: `✅ You will give **${amt} ${res}**.\nClick **Set What You Request** to continue.`,
-            ephemeral: true
-        });
+        return interaction.reply({ content: `✅ You will give **${amt} ${res}**.\nClick **Set What You Request** to continue.`, ephemeral: true });
     }
 
-    // Trade: Request modal submit
-    if (action === 'tmodalrm') {
-        const targetId = args[0];
+    // Trade: Request modal submit (action = 'tmodalr', args[0] = targetId)
+    if (action === 'tmodalr') {
         const res = interaction.fields.getTextInputValue('res')?.trim().toLowerCase();
         const amt = parseInt(interaction.fields.getTextInputValue('amt'));
         if (!res || isNaN(amt) || amt <= 0) return interaction.reply({ content: '⚠️ Invalid input.', ephemeral: true });
-
-        return interaction.reply({
-            content: `✅ You will request **${amt} ${res}**.\nBoth sides set — use the trade embed to confirm or start over.`,
-            ephemeral: true
-        });
+        return interaction.reply({ content: `✅ You will request **${amt} ${res}**.\nBoth sides set — use the trade embed to confirm or start over.`, ephemeral: true });
     }
 
     if (action === 'vitale' && args[0] === 'modal') {
@@ -926,22 +940,6 @@ async function handleSelect(interaction, action, args) {
             .setStyle(ButtonStyle.Primary);
 
         return interaction.editReply({ embeds: [previewEmb], components: [new ActionRowBuilder().addComponents(confirmBtn)] });
-    }
-
-    // Faction trade: open the amount modal after preview confirmed
-    if (action === 'trade' && args[0] === 'facconfirm') {
-        const userId = args[1];
-        const faction = args[2];
-        const giveRes = decRes(args[3]);  // decode
-        const recvRes = decRes(args[4]);
-        if (interaction.user.id !== userId) return interaction.reply({ content: '⚠️ Only the player who opened this may use it.', ephemeral: true });
-        const modal = new ModalBuilder()
-            .setCustomId(`trade_facmod_${userId}_${faction}_${encRes(giveRes)}_${encRes(recvRes)}`)
-            .setTitle(`Give ${giveRes.replace('_surplus',' (Food)')} for ${recvRes.replace('_surplus',' (Food)')}`);
-        modal.addComponents(
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('give_amt').setLabel(`Amount of ${giveRes.replace('_surplus',' (Food)')} to give`).setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('100'))
-        );
-        return await interaction.showModal(modal);
     }
 }
 

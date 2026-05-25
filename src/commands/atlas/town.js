@@ -222,6 +222,10 @@ async function handleButton(interaction, action, args) {
 async function handleModal(interaction, action, args) {
     const db = interaction.client.db;
 
+    // customId split convention: setCustomId('townrename_${townId}') → action='townrename', args=[townId]
+    //                             setCustomId('townsettle_modal')      → action='townsettle', args=['modal']
+    // (interactionCreate.js splits on '_'; first segment = action, rest = args array)
+
     // Town rename modal
     if (action === 'townrename') {
         const townId = parseInt(args[0]);

@@ -471,8 +471,6 @@ function showFormationPick(interaction, uid, targetId, townName, mode) {
         menu.addOptions({ label, value: key, description: `${f.bonus}${f.reqUnit ? ' (unit required)' : ''}` });
     }
 
-    // Styx siege warning
-    const def = interaction.client ? null : null;
     let styxWarn = '';
 
     const emb = new EmbedBuilder()

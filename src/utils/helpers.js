@@ -265,6 +265,9 @@ function calcMaintenance(user) {
 
 // ─── Database migrations ──────────────────────────────────────────────────────
 
+// helpers.js initDB(): Extended schema (gm_events, trade_routes, treaties, duels, bets, pending_trades)
+//   + idempotent ALTER TABLE migrations for all columns added after initial deploy.
+// Both must be called on startup: setupDatabase() then initDB(db).
 async function initDB(db) {
     // Safe migrations — each silently skipped if column already exists
     const migrations = [
@@ -409,19 +412,8 @@ async function initDB(db) {
         }
     } catch (e) { console.error('[DB] FIX 4 failed:', e.message); }
 
-    // FIX 6: Migrate legacy mil_infantry → mil_swordsman
-    try {
-        const result = await db.run(`
-            UPDATE users SET mil_swordsman = COALESCE(mil_swordsman,0) + COALESCE(mil_infantry,0),
-            mil_infantry = 0
-            WHERE mil_infantry > 0
-        `);
-        if (result.changes > 0) {
-            console.log(`[DB] FIX 6: Migrated ${result.changes} players\' mil_infantry → mil_swordsman.`);
-        }
-    } catch (e) { console.error('[DB] FIX 6 failed:', e.message); }
-    // Sets mil_maintenance_cost = pop_soldiers * 1 (1 food per soldier per day)
-    // for any row where soldiers > 0 but maintenance_cost is still 0.
+    // FIX 5 (legacy — safe to remove once all instances have run once):
+    // Sets mil_maintenance_cost from pop_soldiers for rows that predate the maintenance column.
     try {
         await db.run(`
             UPDATE users
@@ -430,6 +422,18 @@ async function initDB(db) {
         `);
         console.log('[DB] FIX 5: mil_maintenance_cost initialized for existing armies.');
     } catch (e) { console.error('[DB] FIX 5 failed:', e.message); }
+
+    // FIX 6: Migrate legacy mil_infantry → mil_swordsman (runs after FIX 5)
+    try {
+        const result = await db.run(`
+            UPDATE users SET mil_swordsman = COALESCE(mil_swordsman,0) + COALESCE(mil_infantry,0),
+            mil_infantry = 0
+            WHERE mil_infantry > 0
+        `);
+        if (result.changes > 0) {
+            console.log(`[DB] FIX 6: Migrated ${result.changes} players' mil_infantry → mil_swordsman.`);
+        }
+    } catch (e) { console.error('[DB] FIX 6 failed:', e.message); }
 
     console.log('[DB] All migrations and fixes complete.');
 }
@@ -445,6 +449,7 @@ module.exports = {
     safeReply,
     calcMorale,
     calcMaintenance,
-    initDB, STAT_MAPPING,
+    initDB,
     GREAT_HOUSES, PLAYER_RANKS, VITALE_FREE_HOUSES
+    // Note: STAT_MAPPING and STAT_KEYS are importable directly from '../../data/constants'
 };

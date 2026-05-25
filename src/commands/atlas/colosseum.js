@@ -7,7 +7,7 @@ const { calcMorale, getMod, sendToPlayer, safeReply } = require('../../utils/hel
 
 const hpBar = (hp) => '🟩'.repeat(Math.max(0, Math.min(10, hp))) + '🟥'.repeat(Math.max(0, 10 - Math.min(10, hp)));
 
-const COLOSSEUM_CHANNEL = '1505508124239466576';
+const COLOSSEUM_CHANNEL = process.env.COLOSSEUM_CHANNEL_ID || '1505508124239466576';
 const ENTRY_GIF = 'https://images-ext-1.discordapp.net/external/LWOX54CKJj8IqkvcQjwwlfjUx0BandNH060qMihzU_0/https/media4.giphy.com/media/v1.Y2lkPTczYjhmN2Ixb2JhenB5cGd1dW9zNGluMjdjam5yaG05cjJraWxobTg0OWs1bWUxZyZlcD12MV9naWZzX2dpZklkJmN0PWc/OOri31H3PKD4fM6tdl/giphy.mp4';
 const VS_GIF = 'https://images-ext-1.discordapp.net/external/KTmzYP_v73BWarLGMlOvnUpmEAS6m1QeyC6NsUKWzis/https/media0.giphy.com/media/v1.Y2lkPTczYjhmN2IxbTl4a2Z3NXcxdmlqaWl0YzhuejBjdzN4dGkyZWZxdnpkZ3N2OXNtbyZlcD12MV9naWZzX2dpZklkJmN0PWc/7t3gLwtVBaP8okfZyg/giphy.mp4';
 const CLAP_GIF = 'https://images-ext-1.discordapp.net/external/QI7G8lcthauy8c6rvlRtnV3CxgP2RMkxo6AjOyOYcpI/https/media1.giphy.com/media/v1.Y2lkPTczYjhmN2IxYjdobjZoZGsycnVjdGg3NXBpYmlvcGExMjgxZmFibHdsaDBtdWd4cSZlcD12MV9naWZzX2dpZklkJmN0PWc/trSsqWQSi96E7eeEAx/giphy.mp4';
@@ -239,7 +239,6 @@ async function handleSelect(interaction, action, args) {
                 await interaction.reply({ content: `❌ **${duel.name || 'Duel'}** cancelled.`, ephemeral: true });
                 return;
             }
-            if (val === 'none') return interaction.reply({ content: 'No duels found.', ephemeral: true });
             const duelId = parseInt(val.replace('view_', ''));
             const duel = await db.get('SELECT * FROM duels WHERE id=?', duelId);
             if (!duel) return interaction.reply({ content: 'Duel not found.', ephemeral: true });

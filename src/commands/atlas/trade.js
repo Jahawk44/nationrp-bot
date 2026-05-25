@@ -194,26 +194,6 @@ async function processTradeRoutes(db, client) {
     }
 }
 
-// Admin: dissolve a treaty
-async function handleTreatyDissolve(db, interaction) {
-    const initiatorId = interaction.options.getString('initiator');
-    const partnerId   = interaction.options.getString('partner');
-    const type        = interaction.options.getString('type');
-    const treaty = await db.get(
-        `SELECT * FROM treaties WHERE initiator_id=? AND partner_id=? AND treaty_type=? AND status='active'`,
-        initiatorId, partnerId, type
-    );
-    if (!treaty) return interaction.editReply({ content: 'No active treaty found matching those parameters.' });
-    await db.run(`UPDATE treaties SET status='broken' WHERE id=?`, treaty.id);
-    // Notify both parties
-    for (const uid of [initiatorId, partnerId]) {
-        const chan = await getNotificationChannel(interaction.client, { id: uid, notification_channel: null, last_tax_channel: null });
-        if (chan) {
-            try { await chan.send({ content: `⚠️ <@${uid}> Your **${type}** treaty with ${uid === initiatorId ? `<@${partnerId}>` : `<@${initiatorId}>`} has been dissolved by the High Command.` }); } catch (_) {}
-        }
-    }
-    return interaction.editReply({ content: `⚖️ Treaty dissolved. Both parties notified.` });
-}
 
 function handleButton(interaction, action, args) {
     if (action === 'traderoute') {
@@ -227,5 +207,5 @@ function handleButton(interaction, action, args) {
 
 module.exports = {
     handleTradeRouteList, handleTradeRoutePropose, handleTradeRouteCancel,
-    processTradeRoutes, handleTreatyDissolve, handleButton
+    processTradeRoutes, handleButton
 };

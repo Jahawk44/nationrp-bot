@@ -520,5 +520,5 @@ async function handleSelect(interaction, action, args) {
 }
 
 module.exports = {
-    handleDiplomacy, handleButton, handleSelect, handleModal, handleTreatyDissolve
+    handleDiplomacy, handleButton, handleSelect, handleModal
 };

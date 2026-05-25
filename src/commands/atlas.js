@@ -148,10 +148,12 @@ module.exports = {
         if (action === 'treaty') {
             return await diplomacy.handleButton(interaction, action, args);
         }
-        if (action.startsWith('war') || action === 'warbattle' || action === 'warsiege' || action === 'wardefcommit' || action === 'warraid') {
-            return await warfare.handleButton(interaction, action, args);
-        }
-        if (action === 'raidwithdraw') {
+        // Explicit war-action allowlist — avoids matching future 'war*' prefixes like 'warehouse'
+        const WAR_ACTIONS = new Set([
+            'warapprove','warreject','warbattle','warsiege',
+            'wardefcommit','warconfirm','warabort','warraid','raidwithdraw'
+        ]);
+        if (WAR_ACTIONS.has(action)) {
             return await warfare.handleButton(interaction, action, args);
         }
         if (action === 'mil' && args[0] === 'back') {
@@ -194,9 +196,6 @@ module.exports = {
         }
         if (action === 'colo') {
             return await colosseum.handleModal(interaction, action, args);
-        }
-        if (action === 'tmodalg' || action === 'tmodalr') {
-            return await economy.handleModal(interaction, action, args);
         }
         if (action === 'warcomp') {
             return await warfare.handleBattleCompositionSubmit(interaction, args[0], args[1]);
