@@ -21,7 +21,7 @@ module.exports = {
         .setDescription('Atlas AI: Imperial Interface')
         .addSubcommand(s => s.setName('begin').setDescription('Start your Imperial Origins.'))
         .addSubcommand(s => s.setName('tax').setDescription('Daily tax collection cycle.'))
-        .addSubcommand(s => s.setName('donate').setDescription('Donate Balance (:coin:) to National Wealth (⚖️).').addIntegerOption(o => o.setName('amount').setDescription('Amount of Wealth to buy (1 ⚖️ = 1,000 :coin:).').setRequired(true)))
+        .addSubcommand(s => s.setName('donate').setDescription('Donate Balance (🪙) to National Wealth (⚖️).').addIntegerOption(o => o.setName('amount').setDescription('Amount of Wealth to buy (1 ⚖️ = 1,000 🪙).').setRequired(true)))
         .addSubcommand(s => s.setName('trade').setDescription('Trade center: manage routes, trade with players and factions.'))
         .addSubcommand(s => s.setName('population').setDescription('View population, noble, and military census.'))
         .addSubcommand(s => s.setName('balance').setDescription('View personal and national wealth.'))
@@ -120,7 +120,7 @@ module.exports = {
     },
 
     async handleButton(interaction, action, args) {
-        if (action === 'origins' || action === 'ageroll' || action === 'fbadd' || action === 'fbreset' || action === 'fbfinalize') {
+        if (action === 'origins' || action === 'ageroll' || action === 'fbadd' || action === 'flawtoggle' || action === 'flawconfirm' || action === 'fbreset' || action === 'fbfinalize') {
             return await character.handleOriginsLogic(interaction, action, args);
         }
         if (action === 'town' || action === 'buildconfirm' || action === 'upgradeconfirm' || action === 'demolishconfirm') {

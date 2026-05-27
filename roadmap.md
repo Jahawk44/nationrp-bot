@@ -11,9 +11,10 @@ This document outlines complex systems and future expansions for the Atlas bot. 
 - **Servus Risk/Reward**: Owning Servus gives +2%/unit production bonus but drains -1 stability per 5 Servus. Rebellion fires at stab ≤ -5.
 - **Vitale Market**: Styx Empire sells Vitale at dynamic prices. Pool = `admin_base + (10 × players)`. Price rises with weekly demand. Resets each Monday.
 - **Treasury Management**: National wealth vs. liquid cash flow.
-- **Food Rot** *(v1.3.0)*: 5% daily rot on food_surplus post-maintenance — prevents indefinite hoarding.
+- **Food Rot** *(v1.3.0)*: 5% daily rot on food post-maintenance — prevents indefinite hoarding.
 - **Tiered Pop Growth** *(v1.3.0)*: food≥1000 → +2%/day | food≥200 → +1.5%/day | food>0 → +1%/day | famine → -1%/day.
 - **Building Wealth Gate** *(v1.3.0)*: Build/upgrade blocked if player has insufficient wealth — prevents debt.
+- **better pop growth** *(v1.5.0)*: food>0 → big math equation head hurty | famine → -1%/day.
 
 ## ✅ [IN PROGRESS] 👥 Population & Nobility (PF2e Inspired)
 **Recommended Model**: Gemini 2.5 Pro / Claude Sonnet
@@ -28,7 +29,7 @@ This document outlines complex systems and future expansions for the Atlas bot. 
 - **Admin Control**: `/admin set field:vitale_base value:N` sets the weekly base allocation.
 
 ## ✅ [COMPLETE] 🤝 Trade System Overhaul (v1.3.0)
-- **One-Time Player Trade**: Now uses dropdown resource selectors (Step 1: give resource → Step 2: receive resource → Step 3: quantities modal). Food (`food_surplus`) is fully tradeable.
+- **One-Time Player Trade**: Now uses dropdown resource selectors (Step 1: give resource → Step 2: receive resource → Step 3: quantities modal). Food (`food`) is fully tradeable.
 - **Trade Consent Flow**: One-time trades now send a proposal embed to the recipient with Accept/Decline buttons. No immediate execution.
 - **Player Trade Routes**: Now use dropdown resource selectors (give → receive → amounts+duration modal). Sent as pending proposals to partner.
 - **Faction Trade Preview**: Before opening amount modal, shows current exchange rate preview embed — Styx trades show live Vitale price.

@@ -144,13 +144,13 @@ async function handleBribe(interaction, userId, factionName, type) {
     const now = Date.now();
 
     if (type === 'gold') {
-        if ((user.balance || 0) < 500) return ephemeralReply(interaction, '⚠️ Insufficient balance. Need 500 :coin:.');
+        if ((user.balance || 0) < 500) return ephemeralReply(interaction, '⚠️ Insufficient balance. Need 500 🪙.');
         await db.run('UPDATE users SET balance=balance-500 WHERE id=?', userId);
         await db.run(
             'INSERT INTO relations (user_id, faction_name, score, last_bribe) VALUES (?,?,COALESCE((SELECT score FROM relations WHERE user_id=? AND faction_name=?),0)+1,?) ON CONFLICT(user_id,faction_name) DO UPDATE SET score=score+1, last_bribe=?',
             userId, factionName, userId, factionName, now, now
         );
-        return interaction.update({ content: `✅ +1 relation with **${factionName}** for 500 :coin:.` });
+        return interaction.update({ content: `✅ +1 relation with **${factionName}** for 500 🪙.` });
     }
 
     if (type === 'exotic') {
@@ -304,7 +304,8 @@ async function handleTreatyPlayerSelect(interaction, userId, treatyType) {
 async function handleTreatyAccept(interaction, treatyId) {
     const db = interaction.client.db;
     const treaty = await db.get('SELECT * FROM treaties WHERE id=? AND partner_id=? AND status="pending"', treatyId, interaction.user.id);
-    return ephemeralReply(interaction, '⚠️ This proposal is no longer valid.');
+    if (!treaty)
+        return ephemeralReply(interaction, '⚠️ This proposal is no longer valid.');
 
     await db.run('UPDATE treaties SET status="active" WHERE id=?', treatyId);
     const emb = EmbedBuilder.from(interaction.message.embeds[0]).setColor(0x00FF88).setTitle('✅ TREATY ACCEPTED');
@@ -319,7 +320,8 @@ async function handleTreatyAccept(interaction, treatyId) {
 async function handleTreatyReject(interaction, treatyId) {
     const db = interaction.client.db;
     const treaty = await db.get('SELECT * FROM treaties WHERE id=? AND partner_id=? AND status="pending"', treatyId, interaction.user.id);
-    return ephemeralReply(interaction, '⚠️ This proposal is no longer valid.');
+    if (!treaty)
+        return ephemeralReply(interaction, '⚠️ This proposal is no longer valid.');
 
     await db.run(`UPDATE treaties SET status='broken' WHERE id=?`, treatyId);
     const emb = EmbedBuilder.from(interaction.message.embeds[0]).setColor(0xFF0000).setTitle('❌ TREATY REJECTED');
@@ -354,7 +356,8 @@ async function handleTreatyDissolve(interaction) {
 }
 
 async function handleWarMenu(interaction, userId) {
-    return ephemeralReply(interaction, '⚠️ Only the player who opened this ledger may use it.');
+    if (interaction.user.id !== userId)
+        return ephemeralReply(interaction, '⚠️ Only the player who opened this ledger may use it.');
     const emb = new EmbedBuilder()
         .setTitle('⚔️ DECLARE WAR')
         .setColor(0xFF0000)
@@ -376,7 +379,8 @@ async function handleWarMenu(interaction, userId) {
 }
 
 async function handleGiftMenu(interaction, userId) {
-    return ephemeralReply(interaction, '⚠️ Only the player who opened this may use it.');
+    if (interaction.user.id !== userId)
+        return ephemeralReply(interaction, '⚠️ Only the player who opened this may use it.');
     const db = interaction.client.db;
     const players = await db.all("SELECT id, username, ruler_name, nation FROM users WHERE status='active' AND id!=?", userId);
     if (!players.length) return interaction.editReply({ content: '⚠️ No other active players to send gifts to.', components: [] });
@@ -406,7 +410,7 @@ async function handleGiftPlayerSelect(interaction, userId) {
         .setPlaceholder('Select resource to gift...')
         .addOptions([
             { label: '💰 Balance', value: 'balance' },
-            { label: '🥩 Food', value: 'food_surplus' },
+            { label: '🥩 Food', value: 'food' },
             { label: '⚒️ Ores', value: 'ores' },
             { label: '💧 Vitale', value: 'vitale' },
             { label: '🍷 Exotics', value: 'exotics' },
@@ -427,10 +431,12 @@ async function handleModal(interaction, action, args) {
         const partnerId = args[2];
         const res = args[3];
         const amt = parseInt(interaction.fields.getTextInputValue('amt'));
-        return ephemeralReply(interaction, '⚠️ Invalid input.');
+        if (isNaN(amt) || amt <= 0)
+            return ephemeralReply(interaction, '⚠️ Invalid input.');
 
         const user = await db.get('SELECT * FROM users WHERE id=?', userId);
-        return ephemeralReply(interaction, `⚠️ Insufficient ${res}.`);
+        if (user[res] < amt)
+            return ephemeralReply(interaction, `⚠️ Insufficient ${res}.`);
 
         await db.run(`UPDATE users SET ${res}=${res}-? WHERE id=?`, amt, userId);
         await db.run(`UPDATE users SET ${res}=COALESCE(${res},0)+? WHERE id=?`, amt, partnerId);

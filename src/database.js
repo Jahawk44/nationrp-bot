@@ -26,7 +26,7 @@ async function setupDatabase() {
             balance INTEGER DEFAULT 1000,
             wealth INTEGER DEFAULT 0,
             exotics INTEGER DEFAULT 0,
-            food_surplus INTEGER DEFAULT 0,
+            food INTEGER DEFAULT 0,
             ores INTEGER DEFAULT 0,
             vitale INTEGER DEFAULT 0,
             servus INTEGER DEFAULT 0,

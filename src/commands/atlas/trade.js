@@ -1,6 +1,6 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { RESOURCES } = require('../../data/constants');
-const { getNotificationChannel, resolveAtlasHQ } = require('../../utils/helpers');
+const { getNotificationChannel } = require('../../utils/helpers');
 
 const NPC_TEXTS = {
     styx:    'Imperial merchants arrive. Wealth exchanged for Vitale at current market rates.',
@@ -19,7 +19,7 @@ async function handleTradeRouteList(interaction) {
     const lines = routes.map(r => {
         const partnerLabel = r.partner_type === 'player'
             ? `<@${r.partner_id}>` : r.partner_type.charAt(0).toUpperCase() + r.partner_type.slice(1);
-        return `**#${r.id}** | ${partnerLabel} | Give: ${r.give_amount} ${r.give_resource} → Receive: ${r.receive_amount} ${r.receive_resource} | ${r.turns_remaining}/${r.duration_turns} turns | ${r.status}`;
+        return `**#${r.id}** | ${partnerLabel} | Give: ${r.give_amount.toLocaleString("en-US")} ${r.give_resource} → Receive: ${r.receive_amount.toLocaleString("en-US")} ${r.receive_resource} | ${r.turns_remaining.toLocaleString("en-US")}/${r.duration_turns.toLocaleString("en-US")} turns | ${r.status}`;
     });
     const embed = new EmbedBuilder().setTitle('🔄 TRADE ROUTES').setColor(0x00BFFF).setDescription(lines.join('\n'));
     return interaction.editReply({ embeds: [embed] });
@@ -39,8 +39,6 @@ async function handleTradeRoutePropose(interaction) {
     if (giveRes === recvRes) return interaction.editReply({ content: '⚠️ Cannot trade the same resource.' });
     if (!RESOURCES[giveRes.toUpperCase()] || !RESOURCES[recvRes.toUpperCase()])
         return interaction.editReply({ content: '⚠️ Invalid resource type.' });
-
-    const user = await db.get('SELECT * FROM users WHERE id=?', interaction.user.id);
 
     // Relation embargo check — blocked only when Hostile (≤ −10). No positive-relation requirement.
     if (partnerType === 'sciatic') {
@@ -102,7 +100,8 @@ async function handleTradeRouteCancel(interaction, routeId) {
 async function handleRouteAccept(interaction, routeId) {
     const db = interaction.client.db;
     const route = await db.get(        `SELECT * FROM trade_routes WHERE id=? AND partner_id=? AND status='pending'`, routeId, interaction.user.id);
-    return ephemeralReply(interaction, '⚠️ This proposal is no longer valid.');
+    if (!route)
+        return ephemeralReply(interaction, '⚠️ This proposal is no longer valid.');
 
     await db.run(`UPDATE trade_routes SET status='active' WHERE id=?`, routeId);
 
@@ -118,7 +117,8 @@ async function handleRouteAccept(interaction, routeId) {
 async function handleRouteReject(interaction, routeId) {
     const db = interaction.client.db;
     const route = await db.get(        `SELECT * FROM trade_routes WHERE id=? AND partner_id=? AND status='pending'`, routeId, interaction.user.id);
-    return ephemeralReply(interaction, '⚠️ This proposal is no longer valid.');
+    if (!route)
+        return ephemeralReply(interaction, '⚠️ This proposal is no longer valid.');
 
     await db.run(`UPDATE trade_routes SET status='broken' WHERE id=?`, routeId);
 
@@ -199,7 +199,8 @@ function handleButton(interaction, action, args) {
     if (action === 'traderoute') {
         const sub = args[0];
         const routeId = parseInt(args[1]);
-        return ephemeralReply(interaction, '⚠️ Invalid route ID.');
+        if (!routeId)
+            return ephemeralReply(interaction, '⚠️ Invalid route ID.');
         if (sub === 'a') return handleRouteAccept(interaction, routeId);
         if (sub === 'r') return handleRouteReject(interaction, routeId);
     }

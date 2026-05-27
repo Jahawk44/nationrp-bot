@@ -1,5 +1,5 @@
 const cron = require('node-cron');
-const { calcStabMultiplier, calcMaintenance } = require('./utils/helpers');
+const { calcMaintenance } = require('./utils/helpers');
 const { processTradeRoutes } = require('./commands/atlas/trade');
 
 function initScheduler(client) {
@@ -14,6 +14,7 @@ function initScheduler(client) {
 
             await db.run('UPDATE global_settings SET value = ? WHERE key = "current_turn"', newTurn.toString());
             await db.run('UPDATE global_settings SET value = "0" WHERE key = "vitale_sold_week"');
+            await db.run('UPDATE global_settings SET value = "0" WHERE key LIKE "demand_%"');
 
             // Process weekly trade routes
             await processTradeRoutes(db, client);
@@ -30,7 +31,7 @@ function initScheduler(client) {
                 const chan = await client.channels.fetch(mainHallId);
                 if (chan) await chan.send({ embeds: [{
                     title: '🏺 AGE TRANSITION',
-                    description: `The Imperial clock has struck. We have entered **Turn ${newTurn}**.\n\nAll Sovereigns may now collect taxes and review their populace.`,
+                    description: `The Imperial clock has struck. We have entered **Turn ${newTurn}**.`,
                     color: 0xFFD700,
                     timestamp: new Date()
                 }]});
@@ -42,27 +43,31 @@ function initScheduler(client) {
         }
     });
 
-    // ── Hourly Tax Notification ──────────────────────────────────────────────
-    cron.schedule('0 * * * *', async () => {
+    // ── Daily Tax Notification (Runs at 12:00 AM GMT) ────────────────────────
+    cron.schedule('0 0 * * *', async () => {
         try {
-            const now       = Date.now();
-            const threshold = now - (24 * 60 * 60 * 1000);
+            // Fetch all users who have a valid channel recorded
             const users = await db.all(
-                'SELECT id, last_tax_channel FROM users WHERE tax_notified = 0 AND last_tax <= ? AND last_tax > 0 AND last_tax_channel IS NOT NULL',
-                threshold
+                'SELECT id, last_tax_channel FROM users WHERE last_tax_channel IS NOT NULL'
             );
+            
             for (const u of users) {
                 try {
                     const channel = await client.channels.fetch(u.last_tax_channel);
                     if (channel) {
                         await channel.send({ content: `<@${u.id}> 🏛️ Your Imperial Tax is ready to be collected! Use \`/atlas tax\`.` });
-                        await db.run('UPDATE users SET tax_notified = 1 WHERE id = ?', u.id);
                     }
                 } catch (_) {}
             }
+
+            // Global reset: Mark everyone as ready to be notified again on their next cycle
+            await db.run('UPDATE users SET tax_notified = 0');
+
         } catch (error) {
-            console.error('[SCHEDULER] Tax Notification Failed:', error);
+            console.error('[SCHEDULER] Daily Tax Notification Failed:', error);
         }
+    }, {
+        timezone: "Etc/UTC" // Ensures the cron runs precisely at 12 AM GMT/UTC regardless of host server time
     });
 
     // ── Daily Population Growth + Military Maintenance: 00:00 ───────────────
@@ -72,9 +77,8 @@ function initScheduler(client) {
             const users = await db.all('SELECT * FROM users WHERE status = "active"');
 
             for (const u of users) {
-                // ── Population growth ────────────────────────────────────────
                 const currentPop = u.pop_commoners || 0;
-                const food       = u.food_surplus  || 0;
+                const food       = u.food  || 0;
 
                 // Calculate pop cap from buildings
                 const towns = await db.all('SELECT id FROM towns WHERE user_id = ?', u.id);
@@ -92,23 +96,19 @@ function initScheduler(client) {
                 }
 
                 let delta = 0;
-                // Tiered pop growth based on food surplus level.
-                // Rates tuned for medieval realism — still compressed vs real history
-                // but won't double a town's population in a month.
-                if (food >= 1000 && currentPop < popCap) {
-                    delta = Math.max(1, Math.floor(currentPop * 0.005));  // Abundant:     +0.5%/day
-                } else if (food >= 200 && currentPop < popCap) {
-                    delta = Math.max(1, Math.floor(currentPop * 0.003));  // Comfortable:  +0.3%/day
-                } else if (food > 0 && currentPop < popCap) {
-                    delta = Math.max(1, Math.floor(currentPop * 0.0015)); // Subsisting:  +0.15%/day
-                } else if (food <= 0) {
-                    delta = -Math.max(1, Math.floor(currentPop * 0.01)); // Famine:       −1%/day
+                if (food > 0) {
+                    delta = (Math.random() * 0.2 + 0.9) // +- 10% variation
+                        * Math.pow(currentPop, 0.13 * Math.log10(currentPop)) // increase growth based off population
+                        * Math.sqrt(food) * Math.log10(food) // increase growth based off food surplus
+                        * Math.min(1, food / currentPop) // decrease growth if there's not enough food surplus to feed everyone
+                        * Math.min(1, (popCap - currentPop) / (Math.log10(currentPop) / Math.log10(1.1))) // decrease growth as population approaches cap, invert growth if over
+                        / 250; // divide by 250 to make number reasonable
+                    if (delta >= 0 && delta < 1)
+                        delta = 1
+                } else if (food < 0) {
+                    delta = -Math.max(1, Math.floor(currentPop * 0.01)); // Famine: −1%/day
                 }
-                delta = Math.min(delta, popCap - currentPop); // don't exceed cap
 
-                // ── Military maintenance ─────────────────────────────────────
-                // FIXED: Use calcMaintenance() against actual mil_* columns.
-                // Legacy pop_soldiers/mil_strength are always 0 in the new schema.
                 const maintenanceCost = calcMaintenance(u);
                 let foodAfterMil = food + delta; // apply pop growth first
 
@@ -165,7 +165,7 @@ function initScheduler(client) {
                 await db.run(`
                     UPDATE users SET
                         pop_commoners         = MAX(0, pop_commoners + ?),
-                        food_surplus          = MAX(0, ?),
+                        food          = MAX(0, ?),
                         mil_militia           = MAX(0, mil_militia   - ?),
                         mil_spearmen          = MAX(0, mil_spearmen  - ?),
                         mil_swordsman         = MAX(0, mil_swordsman - ?),

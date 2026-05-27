@@ -22,8 +22,8 @@ async function handleMilitary(interaction) {
             `🏰 **Siege** — Lay siege to a settlement (Sovereign)`,
             `🗡️ **Raid** — Hit-and-run raid (Dominar+)`,
             '',
-            `Your army: ⚔️Inf ${user.mil_infantry||0} 🐎Cav ${user.mil_cavalry||0} 🏹Rng ${user.mil_ranged||0} 🪨Sie ${user.mil_siege||0} 🗡️Merc ${user.mercs_temp||0}`,
-            `Food: ${user.food_surplus||0} 🥩 | Morale: ${calcMorale(user)}`,
+            `Your army: ⚒️ Mil ${user.mil_militia?.toLocaleString("en-US") || 0} | ⚔️ Inf ${user.mil_infantry?.toLocaleString("en-US") || 0} | 🐎 Cav ${user.mil_cavalry?.toLocaleString("en-US") || 0} | 🏹 Rng ${user.mil_ranged?.toLocaleString("en-US") || 0} | 🪨 Sie ${user.mil_siege?.toLocaleString("en-US") || 0} | 🗡️ Merc ${user.mercs_temp?.toLocaleString("en-US") || 0}`,
+            `Food: ${user.food.toLocaleString("en-US") || 0} 🥩 | Morale: ${calcMorale(user).toLocaleString("en-US")}`,
         ].join('\n'));
 
     const actionMenu = new StringSelectMenuBuilder()
@@ -95,7 +95,6 @@ async function handleSelect(interaction, action, args) {
             const def = ARMY_TYPES[unitType.toUpperCase()];
             if (!def && unitType.toUpperCase() !== 'MERCENARY') return ephemeralReply(interaction, '⚠️ Unknown unit.');
 
-            const user = await db.get('SELECT * FROM users WHERE id=?', uid);
             if (unitType.toUpperCase() !== 'MERCENARY' && def.requires) {
                 const check = await db.get('SELECT 1 FROM buildings b JOIN towns t ON b.town_id=t.id WHERE t.user_id=? AND UPPER(b.type)=? AND (b.ready_at IS NULL OR b.ready_at<=?)', uid, def.requires, Date.now());
                 if (!check) return ephemeralReply(interaction, `⚠️ You need **${def.requires}** to recruit ${def.name}.`);
@@ -106,7 +105,7 @@ async function handleSelect(interaction, action, args) {
                 .setCustomId(`mil_recruitmod_${uid}_${unitType}`)
                 .setTitle(`⚔️ Recruit ${def?.name || 'Mercenaries'}`);
             modal.addComponents(
-                new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('amt').setLabel(`Amount (${cost}:coin: each, max 10% pop)`).setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('10'))
+                new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('amt').setLabel(`Amount (${cost}🪙 each, max 10% pop)`).setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('10'))
             );
             return await interaction.showModal(modal);
         }
@@ -149,7 +148,7 @@ async function handleSelect(interaction, action, args) {
             buildUnitModal(modal, atk);
             return await interaction.showModal(modal);
         }
-    // Formation selected → show percentage modal
+        // Formation selected → show percentage modal
         if (sub === 'formation') {
             const targetId = args[2];
             const mode = args[3];
@@ -215,33 +214,36 @@ async function handleModal(interaction, action, args) {
 
         if (unitType === 'MERCENARY') {
             const cost = amt * 150;
-            if ((user.balance||0) < cost) return ephemeralReply(interaction, `⚠️ Need ${cost} :coin:.`);
+            if ((user.balance||0) < cost) return ephemeralReply(interaction, `⚠️ Need ${cost} 🪙.`);
             await db.run('UPDATE users SET balance=balance-?, mercs_temp=COALESCE(mercs_temp,0)+? WHERE id=?', cost, amt, uid);
-            return ephemeralReply(interaction, `🗡️ Hired **${amt} mercenaries** for ${cost} :coin:. *${MERC_DESC}*`);
+            return ephemeralReply(interaction, `🗡️ Hired **${amt.toLocaleString("en-US")} mercenaries** for ${cost.toLocaleString("en-US")} 🪙. *${MERC_DESC}*`);
         }
 
         const def = ARMY_TYPES[unitType];
         if (!def) return ephemeralReply(interaction, '⚠️ Unknown unit.');
+        
+        const armySize = user.mil_militia + user.mil_infantry + user.mil_cavalry + user.mil_ranged + user.mil_siege + user.mil_swordsman + user.mil_spearmen
 
         const maxRecruits = Math.floor((user.pop_commoners||0)*0.10);
-        if (amt > maxRecruits) return ephemeralReply(interaction, `⚠️ Max ${maxRecruits} (10% of commoners).`);
+        if (armySize + amt > maxRecruits) return ephemeralReply(interaction, `⚠️ Max army size is ${maxRecruits.toLocaleString("en-US")} (10% of commoners). Your army size is ${armySize.toLocaleString("en-US")}.`);
 
         const metCost = def.cost_met * amt;
-        if (metCost > 0 && (user.metallurgy||0) < metCost) return ephemeralReply(interaction, `⚠️ Need ${metCost} 🔩.`);
+        if (metCost > 0 && (user.metallurgy||0) < metCost) return ephemeralReply(interaction, `⚠️ Need ${metCost.toLocaleString("en-US")} 🔩.`);
 
         const balCost = def.cost_balance * amt;
-        if ((user.balance||0) < balCost) return ephemeralReply(interaction, `⚠️ Need ${balCost} :coin:.`);
+        if ((user.balance||0) < balCost) return ephemeralReply(interaction, `⚠️ Need ${balCost.toLocaleString("en-US")} 🪙.`);
 
         const colMap = { MILITIA:'mil_militia', SPEARMEN:'mil_spearmen', SWORDSMAN:'mil_swordsman', SHIELD:'mil_shield', CAVALRY:'mil_cavalry', RANGED:'mil_ranged', SIEGE:'mil_siege' };
         const col = colMap[unitType];
         const updated = { ...user, [col]: (user[col]||0)+amt };
         const newMaint = calcMaintenance(updated);
-        await db.run(`UPDATE users SET balance=balance-?, metallurgy=COALESCE(metallurgy,0)-?, ${col}=COALESCE(${col},0)+?, pop_commoners=pop_commoners-?, mil_maintenance_cost=? WHERE id=?`, balCost, metCost, amt, amt, newMaint, uid);
+        //await db.run(`UPDATE users SET balance=balance-?, metallurgy=COALESCE(metallurgy,0)-?, ${col}=COALESCE(${col},0)+?, pop_commoners=pop_commoners-?, mil_maintenance_cost=? WHERE id=?`, balCost, metCost, amt, amt, newMaint, uid);
+        await db.run(`UPDATE users SET balance=balance-?, metallurgy=COALESCE(metallurgy,0)-?, ${col}=COALESCE(${col},0)+?, mil_maintenance_cost=? WHERE id=?`, balCost, metCost, amt, newMaint, uid);
 
         const strMod = Math.max(0, getMod(user.attr_str||10));
         const discount = Math.min(0.30, strMod*0.01);
         const daily = Math.floor(def.food_per_unit*amt*(1-discount));
-        return ephemeralReply(interaction, `⚔️ Recruited **${amt} ${def.name}** for ${balCost} :coin:${metCost>0?' + '+metCost+' 🔩':''}. Upkeep: ${daily} 🥩/day.`);
+        return ephemeralReply(interaction, `⚔️ Recruited **${amt.toLocaleString("en-US")} ${def.name}** for ${balCost.toLocaleString("en-US")} 🪙${metCost>0?' + '+metCost.toLocaleString("en-US")+' 🔩':''}. Upkeep: ${daily.toLocaleString("en-US")} 🥩/day.`);
     }
 
     // Siege modal submit
@@ -292,12 +294,12 @@ async function showRecruitMenu(interaction, uid, db) {
     const user = await db.get('SELECT * FROM users WHERE id=?', uid);
     const menu = new StringSelectMenuBuilder().setCustomId(`mil_recruittype_${uid}`).setPlaceholder('Select unit type...')
         .addOptions(Object.entries(ARMY_TYPES).map(([k,v]) => ({
-            label: `${v.emoji} ${v.name} (${v.cost_balance}:coin: each)`,
+            label: `${v.emoji} ${v.name} (${v.cost_balance}🪙 each)`,
             value: k.toLowerCase(),
             description: v.requires ? `Requires: ${v.requires}` : 'No building required'
-        })).concat({ label: '🗡️ Mercenary (150:coin: each)', value: 'mercenary', description: 'Expires at turn end. No barracks needed.' }));
+        })).concat({ label: '🗡️ Mercenary (150🪙 each)', value: 'mercenary', description: 'Expires at turn end. No barracks needed.' }));
     return interaction.editReply({ embeds: [new EmbedBuilder().setTitle('⚔️ RECRUIT').setColor(0xFF4400)
-        .setDescription(`Pop: ${user.pop_commoners||0} | Balance: ${user.balance||0} :coin: | 🔩: ${user.metallurgy||0}`)], components: [new ActionRowBuilder().addComponents(menu), backRow(uid)] });
+        .setDescription(`Pop: ${user.pop_commoners||0} | Balance: ${user.balance||0} 🪙 | 🔩: ${user.metallurgy||0}`)], components: [new ActionRowBuilder().addComponents(menu), backRow(uid)] });
 }
 
 async function showBattleTargets(interaction, uid, db) {
@@ -356,8 +358,8 @@ async function handleMilSiege(interaction, uid, targetId, townName, db, warfare)
     }
 
     const foodCost = ((counts.inf||0)+(counts.cav||0)+(counts.rng||0)+(counts.sie||0)+(counts.mercs||0))*5;
-    if ((atk.food_surplus||0) < foodCost) return ephemeralReply(interaction, `⚠️ Need ${foodCost} 🥩.`);
-    await db.run('UPDATE users SET food_surplus=food_surplus-? WHERE id=?', foodCost, uid);
+    if ((atk.food||0) < foodCost) return ephemeralReply(interaction, `⚠️ Need ${foodCost} 🥩.`);
+    await db.run('UPDATE users SET food=food-? WHERE id=?', foodCost, uid);
 
     const compStr = `${counts.inf}_${counts.cav}_${counts.rng}_${counts.sie}_${counts.mercs}_${town.terrain_type}`;
     const emb = new EmbedBuilder().setTitle('🏰 SIEGE REQUEST').setColor(0xFF4400)
@@ -393,8 +395,8 @@ async function handleFormationSubmit(interaction, uid, targetId, formationKey, m
     if (!anyCommitted) return ephemeralReply(interaction, '⚠️ You must commit at least some forces. All percentages are 0%.');
 
     const foodCost = mode === 'siege' ? totalUnits * 5 : totalUnits * 2;
-    if ((atk.food_surplus||0) < foodCost) return ephemeralReply(interaction, `⚠️ Need ${foodCost} 🥩.`);
-    await db.run('UPDATE users SET food_surplus=food_surplus-? WHERE id=?', foodCost, uid);
+    if ((atk.food||0) < foodCost) return ephemeralReply(interaction, `⚠️ Need ${foodCost} 🥩.`);
+    await db.run('UPDATE users SET food=food-? WHERE id=?', foodCost, uid);
 
     const compStr = `${commits.mil_militia}_${commits.mil_spearmen}_${commits.mil_swordsman}_${commits.mil_shield}_${commits.mil_cavalry}_${commits.mil_ranged}_${commits.mil_siege}_${commits.mercs_temp}_${formationKey}_${mode}`;
 

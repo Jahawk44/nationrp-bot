@@ -384,7 +384,7 @@ This file tracks the evolution of the NationRP Discord Bot (ATLAS). Use this as 
 ## 📦 Database Schema (Reference)
 | Table | Fields |
 | :--- | :--- |
-| **users** | `id, balance, wealth, food_surplus, ores, vitale, pop_*, attr_* (default 10), age, hp_max, hp_current, ac, description, status, ancestry, upbringing, profession, etc.` |
+| **users** | `id, balance, wealth, food, ores, vitale, pop_*, attr_* (default 10), age, hp_max, hp_current, ac, description, status, ancestry, upbringing, profession, etc.` |
 | **towns** | `id, user_id, name, terrain_type, plots_total, fertility` |
 | **buildings** | `id, town_id, type, level, ready_at` |
 | **relations**| `user_id, faction_name, score` |
@@ -477,7 +477,7 @@ To ensure easy troubleshooting and scalability, the bot's architecture has been 
 **Fix (helpers.js → `initDB` + scheduler.js):**
 - `initDB` now sets `mil_maintenance_cost = pop_soldiers` for any row where soldiers > 0 but cost is 0.
 - `handleRecruit` (action.js) now increments `mil_maintenance_cost` by the number of soldiers recruited.
-- The daily scheduler now deducts maintenance from `food_surplus`. If food runs out, soldiers desert proportionally and stability takes -1.
+- The daily scheduler now deducts maintenance from `food`. If food runs out, soldiers desert proportionally and stability takes -1.
 
 ---
 

@@ -91,10 +91,10 @@ async function handleRaidCompositionSubmit(interaction, atkId, defId, townNameEn
     }
 
     const totalCost = Object.values(counts).reduce((s, v) => s + v, 0) * 2;
-    if ((atk.food_surplus || 0) < totalCost)
+    if ((atk.food || 0) < totalCost)
         return ephemeralReply(interaction, `⚠️ Insufficient supplies. Need **${totalCost} 🥩**.`);
 
-    await db.run('UPDATE users SET food_surplus=food_surplus-? WHERE id=?', totalCost, atk.id);
+    await db.run('UPDATE users SET food=food-? WHERE id=?', totalCost, atk.id);
 
     // Encode force counts into a compact string for the GM approve button
     const compStr = `${counts.inf}_${counts.cav}_${counts.rng}_${counts.sie}_${counts.mercs}`;

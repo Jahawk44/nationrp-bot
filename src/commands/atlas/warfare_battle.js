@@ -94,10 +94,10 @@ async function handleBattleCompositionSubmit(interaction, atkId, defId) {
             totalFoodCost += val * 2;
         }
 
-        if ((atk.food_surplus || 0) < totalFoodCost)
+        if ((atk.food || 0) < totalFoodCost)
             return ephemeralReply(interaction, `⚠️ Insufficient supplies. Need **${totalFoodCost} 🥩**.`);
 
-        await db.run('UPDATE users SET food_surplus=food_surplus-? WHERE id=?', totalFoodCost, atk.id);
+        await db.run('UPDATE users SET food=food-? WHERE id=?', totalFoodCost, atk.id);
 
         const terrainKeys = Object.keys(TERRAINS);
         const terrainKey = terrainKeys[Math.floor(Math.random() * terrainKeys.length)];
@@ -291,9 +291,9 @@ async function handleBattleResolve(interaction, atkId, defId, atkCompStr, format
     }
 
     const defFood = defTotal * 2;
-    if ((def.food_surplus || 0) < defFood)
+    if ((def.food || 0) < defFood)
         return ephemeralReply(interaction, `⚠️ Insufficient food. Need **${defFood} 🥩**.`);
-    await db.run('UPDATE users SET food_surplus=MAX(0,food_surplus-?) WHERE id=?', defFood, def.id);
+    await db.run('UPDATE users SET food=MAX(0,food-?) WHERE id=?', defFood, def.id);
 
     // Build power objects
     const defComp = {

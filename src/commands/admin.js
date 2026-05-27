@@ -12,7 +12,7 @@ module.exports = {
                 .addStringOption(o => o.setName('target').setDescription('Player').setRequired(true).setAutocomplete(true))
                 .addStringOption(o => o.setName('field').setDescription('Stat/Data').setRequired(true).addChoices(
                     { name: '🥮 Balance', value: 'balance' }, { name: '⚖️ National Wealth', value: 'wealth' }, { name: '💎 Exotics', value: 'exotics' },
-                    { name: '🥩 Food Surplus', value: 'food_surplus' }, { name: '⛓️ Ores', value: 'ores' }, { name: '💠 Vitale', value: 'vitale' },
+                    { name: '🥩 Food', value: 'food' }, { name: '⛓️ Ores', value: 'ores' }, { name: '💠 Vitale', value: 'vitale' },
                     { name: '💪 Strength', value: 'attr_str' }, { name: '🏃 Motoric', value: 'attr_mot' }, { name: '💀 Menace', value: 'attr_men' },
                     { name: '🧠 Intelligence', value: 'attr_int' }, { name: '🕯️ Wisdom', value: 'attr_wis' }, { name: '🎭 Charisma', value: 'attr_cha' },
                     { name: '🌍 Nation Name', value: 'nation' }, { name: '🧬 Ancestry', value: 'ancestry' }, { name: '📜 Upbringing', value: 'upbringing' },
@@ -144,7 +144,7 @@ module.exports = {
             for (const u of users) {
                 const rankEmoji = u.nation ? '👑' : (u.player_rank === 'DOMINAR' ? '🏡' : '🎓');
                 const label = u.status === 'deposed' ? '⚠️ DEPOSED' : (u.nation || u.ruler_name || u.username || u.id);
-                const foodText = (u.food_surplus || 0) <= 0 ? '⚠️FAMINE' : `${u.food_surplus || 0}🥩`;
+                const foodText = (u.food || 0) <= 0 ? '⚠️FAMINE' : `${u.food || 0}🥩`;
                 const stabWarn = (u.rate_stab || 0) <= -3 ? '🔴' : '';
                 const prestWarn = (u.rate_prest || 0) <= -2 ? '🔴' : '';
                 lines.push(
