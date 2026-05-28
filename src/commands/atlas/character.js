@@ -62,34 +62,34 @@ async function handleOriginsLogic(interaction, action, args) {
                 new ButtonBuilder().setCustomId(`origins_ancestrypick_POLYSIA-RIPARIAN_${age}`).setLabel('Polysia-Riparian').setEmoji('🚣').setStyle(ButtonStyle.Primary),
                 new ButtonBuilder().setCustomId(`origins_back_intro`).setLabel('Back').setStyle(ButtonStyle.Secondary)
             );
-            await interaction.deferUpdate();
+            try { await interaction.deferUpdate(); } catch {}
             return interaction.editReply({ embeds: [embed], components: [row] });
         }
         
         if (sub === 'ancestrypick') {
             const [ , ancKey, age ] = args;
             const anc = ANCESTRIES[ancKey];
-            const bonuses = Object.entries(anc.bonuses).map(([k, v]) => `${k.replace('stat_', '').toUpperCase()} +${v}`).join(', ');
+            const bonuses = Object.entries(anc.bonuses).map(([k, v]) => `${k.replace('stat_', '').toUpperCase()} ${fmtMod(v)}`).join(', ');
             const embed = new EmbedBuilder().setTitle(`📜 BACKGROUND: ${anc.name}`).setColor(0xFFD700)
                 .setDescription(`*${anc.desc}*\n\n**Ancestry Bonus:** \`${bonuses}\`\n\nNow, choose your **Background (Upbringing)**:`);
             const rows = [];
             let currentRow = new ActionRowBuilder();
             for (const [key, ub] of Object.entries(UPBRINGINGS)) {
                 if (currentRow.components.length === 5) { rows.push(currentRow); currentRow = new ActionRowBuilder(); }
-                const b = Object.entries(ub.bonuses).map(([k, v]) => `${k.replace('stat_', '').toUpperCase()} +${v}`).join(', ');
+                const b = Object.entries(ub.bonuses).map(([k, v]) => `${k.replace('stat_', '').toUpperCase()} ${fmtMod(v)}`).join(', ');
                 currentRow.addComponents(new ButtonBuilder().setCustomId(`origins_bgpick_${ancKey}_${key}_${age}`).setLabel(`${ub.name} (${b})`).setStyle(ButtonStyle.Secondary));
             }
             if (currentRow.components.length > 0) rows.push(currentRow);
             const backRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`origins_back_intro`).setLabel('Back').setStyle(ButtonStyle.Secondary));
             rows.push(backRow);
-            await interaction.deferUpdate();
+            try { await interaction.deferUpdate(); } catch {}
             return interaction.editReply({ embeds: [embed], components: rows });
         }
 
         if (sub === 'bgpick') {
             const [ , ancKey, bgKey, age ] = args;
             const ub = UPBRINGINGS[bgKey];
-            const bonuses = Object.entries(ub.bonuses).map(([k, v]) => `${k.replace('stat_', '').toUpperCase()} +${v}`).join(', ');
+            const bonuses = Object.entries(ub.bonuses).map(([k, v]) => `${k.replace('stat_', '').toUpperCase()} ${fmtMod(v)}`).join(', ');
             const embed = new EmbedBuilder().setTitle(`📜 PROFESSION: ${ub.name}`).setColor(0xFFD700)
                 .setDescription(`*${ub.desc}*\n\n**Background Bonus:** \`${bonuses}\`\n\nFinally, choose your **Profession**:`);
             const rows = [];
@@ -97,31 +97,42 @@ async function handleOriginsLogic(interaction, action, args) {
             for (const [key, prof] of Object.entries(PROFESSIONS)) {
                 if (currentRow.components.length === 5) { rows.push(currentRow); currentRow = new ActionRowBuilder(); }
                 const b = Object.entries(prof.bonuses).map(([k, v]) => {
-                    if (k === 'all') return 'ALL +1';
-                    return `${k.replace('stat_', '').toUpperCase()} +${v}`;
+                    if (k === 'all') return `ALL +${fmtMod(v)}`;
+                    return `${k.replace('stat_', '').toUpperCase()} ${fmtMod(v)}`;
                 }).join(', ');
                 currentRow.addComponents(new ButtonBuilder().setCustomId(`origins_profpick_${ancKey}_${bgKey}_${key}_${age}`).setLabel(`${prof.name} (${b})`).setStyle(ButtonStyle.Success));
             }
             if (currentRow.components.length > 0) rows.push(currentRow);
-            const backRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`origins_back_ancestry_${age}`).setLabel('Back').setStyle(ButtonStyle.Secondary));
+            const backRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`origins_back_ancestry_${ancKey}_${age}`).setLabel('Back').setStyle(ButtonStyle.Secondary));
             rows.push(backRow);
-            await interaction.deferUpdate();
+            try { await interaction.deferUpdate(); } catch {}
             return interaction.editReply({ embeds: [embed], components: rows });
         }
 
         if (sub === 'profpick') {
             const [ , ancKey, bgKey, profKey, age ] = args;
             await interaction.deferUpdate();
-            return await renderFreeBoostView(interaction, ancKey, bgKey, profKey, '000000', age);
+            return await renderFlawSelectionView(interaction, ancKey, bgKey, profKey, -1, 0, age);
         }
 
         if (sub === 'back') {
             const type = args[1];
-            await interaction.deferUpdate();
             const user = await db.get('SELECT * FROM users WHERE id = ?', interaction.user.id);
+            await interaction.deferUpdate();
             if (type === 'intro') return await handleOriginsIntro(interaction, user);
-            if (type === 'ancestry') return await handleOriginsLogic(interaction, 'origins', ['ancestrypick', 'placeholder', args[2]]);
+            if (type === 'ancestry') return await handleOriginsLogic(interaction, 'origins', ['ancestrypick', args[2], args[3]]);
             if (type === 'bg') return await handleOriginsLogic(interaction, 'origins', ['bgpick', args[2], 'placeholder', args[3]]);
+            if (type === 'prof') {
+                const [ , , ancKey, bgKey, age] = args;
+                return await handleOriginsLogic(interaction, 'origins', ['bgpick', ancKey, bgKey, age]);
+            }
+            if (type === 'flaw') {
+                const [ , , anc, ub, prof, currentDistStr, age] = args;
+                const currentDist = currentDistStr.split(',').map(Number);
+                const fIdx = currentDist.findIndex(x => x < 0);
+                const fVal = fIdx !== -1 ? currentDist[fIdx] : 0;
+                return await renderFlawSelectionView(interaction, anc, ub, prof, fIdx, fVal, age);
+            }
             return await handleOriginsIntro(interaction, user);
         }
 
@@ -141,24 +152,48 @@ async function handleOriginsLogic(interaction, action, args) {
         return await handleOriginsIntro(interaction, user);
     }
 
+    if (action === 'flawtoggle') {
+        const [anc, ub, prof, flawStatIdxStr, flawValStr, age] = args;
+        await interaction.deferUpdate();
+        return await renderFlawSelectionView(interaction, anc, ub, prof, parseInt(flawStatIdxStr), parseInt(flawValStr), age);
+    }
+
+    if (action === 'flawconfirm') {
+        const [anc, ub, prof, flawStatIdxStr, flawValStr, age] = args;
+        const flawStatIdx = parseInt(flawStatIdxStr);
+        const flawVal = parseInt(flawValStr);
+        
+        // Build tracking array. Flaw values are saved as negative integers directly in the base array.
+        const dist = [0, 0, 0, 0, 0, 0];
+        if (flawStatIdx !== -1 && flawVal !== 0) {
+            dist[flawStatIdx] = flawVal;
+        }
+        
+        await interaction.deferUpdate();
+        return await renderFreeBoostView(interaction, anc, ub, prof, dist.join(','), age);
+    }
+
     if (action === 'fbadd') {
         const [anc, ub, prof, distStr, idx, age] = args;
-        const dist = distStr.split('').map(Number);
+        const dist = distStr.split(',').map(Number);
         dist[idx]++;
-        const newDistStr = dist.join('');
+        const newDistStr = dist.join(',');
         await interaction.deferUpdate();
         return await renderFreeBoostView(interaction, anc, ub, prof, newDistStr, age);
     }
 
     if (action === 'fbreset') {
-        const [anc, ub, prof, , age] = args;
+        const [anc, ub, prof, distStr, age] = args;
+        const dist = distStr.split(',').map(Number);
+        // Wipe all positive additions, retain our saved negative flaws
+        const resetDist = dist.map(val => val < 0 ? val : 0);
         await interaction.deferUpdate();
-        return await renderFreeBoostView(interaction, anc, ub, prof, '000000', age);
+        return await renderFreeBoostView(interaction, anc, ub, prof, resetDist.join(','), age);
     }
 
     if (action === 'fbfinalize') {
         const [anc, ub, prof, distStr, age] = args;
-        const modal = new ModalBuilder().setCustomId(`originsmodal_${anc}_${ub}_${prof}_${distStr || '000000'}_${age}`).setTitle('Imperial Audit — Finalize');
+        const modal = new ModalBuilder().setCustomId(`originsmodal_${anc}_${ub}_${prof}_${distStr}_${age}`).setTitle('Imperial Audit — Finalize');
         modal.addComponents(
             new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('ruler_name').setLabel('Character Name').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(32)),
             new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('description').setLabel('Biography').setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(1500)),
@@ -168,16 +203,93 @@ async function handleOriginsLogic(interaction, action, args) {
     }
 }
 
+async function renderFlawSelectionView(interaction, anc, ub, prof, flawStatIdx, flawVal, age) {
+    const stats = buildBaseAttributes();
+    applyBoosts(stats, ANCESTRIES[anc].bonuses);
+    applyBoosts(stats, UPBRINGINGS[ub].bonuses);
+    applyBoosts(stats, PROFESSIONS[prof].bonuses);
+
+    const statRows = [
+        `${EMOJIS.str} **STR:** ${stats.stat_str}`,
+        `${EMOJIS.mot} **MOT:** ${stats.stat_mot}`,
+        `${EMOJIS.men} **MEN:** ${stats.stat_men}`,
+        `${EMOJIS.int} **INT:** ${stats.stat_int}`,
+        `${EMOJIS.wis} **WIS:** ${stats.stat_wis}`,
+        `${EMOJIS.cha} **CHA:** ${stats.stat_cha}`
+    ];
+
+    // Determine extra points based on flaw selection level
+    const bonusPoints = Math.abs(flawVal);
+    const totalPoints = 4 + bonusPoints;
+
+    const embed = new EmbedBuilder().setTitle('⚖️ CHOOSE LINEAGE FLAW (OPTIONAL)').setColor(0xFFD700)
+        .setDescription(`You can choose to penalize **one** stat to gain extra customization points for the next phase.\n\n` +
+            `• **Minor Flaw (-1):** Grants +1 point (5 points total)\n` +
+            `• **Major Flaw (-2):** Grants +2 points (6 points total)\n\n` +
+            `**Current Stats Before Flaw:**\n${statRows.join('\n')}\n\n` +
+            `*Click a stat button repeatedly to cycle through penalties (Normal ➔ -1 ➔ -2 ➔ Normal).*`);
+
+    const rows = [new ActionRowBuilder(), new ActionRowBuilder()];
+    const statLabels = ['str', 'mot', 'men', 'int', 'wis', 'cha'];
+    const statEmojis = [EMOJIS.str, EMOJIS.mot, EMOJIS.men, EMOJIS.int, EMOJIS.wis, EMOJIS.cha];
+
+    statLabels.forEach((label, i) => {
+        const rowIdx = i < 3 ? 0 : 1;
+        const isCurrentFlaw = (flawStatIdx === i);
+        const currentPenalty = isCurrentFlaw ? flawVal : 0;
+
+        let nextFlawStatIdx = flawStatIdx;
+        let nextFlawVal = flawVal;
+
+        // Cycle Logic: 0 -> -1 -> -2 -> 0
+        if (isCurrentFlaw) {
+            if (flawVal === -1) nextFlawVal = -2;
+            else { nextFlawStatIdx = -1; nextFlawVal = 0; }
+        } else {
+            nextFlawStatIdx = i;
+            nextFlawVal = -1;
+        }
+
+        const btn = new ButtonBuilder()
+            .setCustomId(`flawtoggle_${anc}_${ub}_${prof}_${nextFlawStatIdx}_${nextFlawVal}_${age}`)
+            .setLabel(`${label.toUpperCase()} (${currentPenalty === 0 ? 'Normal' : currentPenalty})`)
+            .setEmoji(statEmojis[i])
+            .setStyle(currentPenalty === 0 ? ButtonStyle.Secondary : ButtonStyle.Danger);
+
+        // Lockdown enforcement: If a different stat has a flaw, disable this one
+        if (flawStatIdx !== -1 && !isCurrentFlaw) {
+            btn.setDisabled(true);
+        }
+
+        rows[rowIdx].addComponents(btn);
+    });
+
+    const ctlRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`flawconfirm_${anc}_${ub}_${prof}_${flawStatIdx}_${flawVal}_${age}`).setLabel(flawVal === 0 ? 'Proceed with No Flaw' : `Confirm Flaw (${totalPoints} Points)`).setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`origins_back_prof_${anc}_${ub}_${age}`).setLabel('Back').setStyle(ButtonStyle.Secondary)
+    );
+    rows.push(ctlRow);
+
+    return interaction.editReply({ embeds: [embed], components: rows });
+}
+
 async function renderFreeBoostView(interaction, anc, ub, prof, distStr, age) {
-    const dist = distStr.split('').map(Number);
-    const used = dist.reduce((a, b) => a + b, 0);
+    const dist = distStr.split(',').map(Number);
+    
+    // Calculate spent/max points cleanly out of the dist state mapping array
+    const positiveBoosts = dist.filter(val => val > 0).reduce((a, b) => a + b, 0);
+    const negativeFlaw = dist.find(val => val < 0) || 0;
+    const maxPointsAvailable = 4 - negativeFlaw;
+    const pointsRemaining = maxPointsAvailable - positiveBoosts;
     
     const stats = buildBaseAttributes();
     applyBoosts(stats, ANCESTRIES[anc].bonuses);
     applyBoosts(stats, UPBRINGINGS[ub].bonuses);
     applyBoosts(stats, PROFESSIONS[prof].bonuses);
-    const distKeys = ['stat_str', 'stat_mot', 'stat_int', 'stat_men', 'stat_wis', 'stat_cha'];
-    for (let i = 0; i < 6; i++) { if (dist[i] > 0) stats[distKeys[i]] = applyBoost(stats[distKeys[i]], dist[i]); }
+    
+    const distKeys = ['stat_str', 'stat_mot', 'stat_men', 'stat_int', 'stat_wis', 'stat_cha'];
+    for (let i = 0; i < 6; i++)
+        stats[distKeys[i]] = applyBoost(stats[distKeys[i]], dist[i]);
 
     const statRows = [
         `${EMOJIS.str} **STR:** ${stats.stat_str} (${fmtMod(getMod(stats.stat_str))})`,
@@ -189,22 +301,32 @@ async function renderFreeBoostView(interaction, anc, ub, prof, distStr, age) {
     ];
 
     const embed = new EmbedBuilder().setTitle('✨ LINEAGE FINALIZATION').setColor(0xFFD700)
-        .setDescription(`You have **${4 - used}** free boosts remaining to customize your lineage.\n\n**Calculated Statistics:**\n${statRows.join('\n')}\n\n*Select a stat below to apply a boost (+1).*`);
+        .setDescription(`You have **${pointsRemaining}** free boosts remaining to customize your lineage.\n\n**Calculated Statistics:**\n${statRows.join('\n')}\n\n*Select a stat below to apply a boost (+1).*`);
     
     const rows = [new ActionRowBuilder(), new ActionRowBuilder()];
-    const statLabels = ['str', 'mot', 'int', 'men', 'wis', 'cha'];
+    const statLabels = ['str', 'mot', 'men', 'int', 'wis', 'cha'];
     const statEmojis = [EMOJIS.str, EMOJIS.mot, EMOJIS.men, EMOJIS.int, EMOJIS.wis, EMOJIS.cha];
+    
     statLabels.forEach((s, i) => {
         const rowIdx = i < 3 ? 0 : 1;
-        const btn = new ButtonBuilder().setCustomId(`fbadd_${anc}_${ub}_${prof}_${distStr}_${i}_${age}`).setLabel(`${s.toUpperCase()} (+${dist[i]})`).setEmoji(statEmojis[i]).setStyle(ButtonStyle.Secondary);
-        if (used >= 4 || dist[i] >= 2) btn.setDisabled(true);
+        const currentBoost = dist[i] > 0 ? dist[i] : 0;
+        
+        const btn = new ButtonBuilder()
+            .setCustomId(`fbadd_${anc}_${ub}_${prof}_${distStr}_${i}_${age}`)
+            .setLabel(`${s.toUpperCase()} (+${currentBoost})`)
+            .setEmoji(statEmojis[i])
+            .setStyle(ButtonStyle.Secondary);
+            
+        if (pointsRemaining <= 0 || currentBoost >= 2) {
+            btn.setDisabled(true);
+        }
         rows[rowIdx].addComponents(btn);
     });
     
     const ctlRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`fbreset_${anc}_${ub}_${prof}_${distStr}_${age}`).setLabel('Reset').setEmoji('🔄').setStyle(ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId(`fbfinalize_${anc}_${ub}_${prof}_${distStr}_${age}`).setLabel('Finalize Audit').setEmoji('📜').setStyle(ButtonStyle.Success).setDisabled(used < 4),
-        new ButtonBuilder().setCustomId(`origins_back_bg_${anc}_${age}`).setLabel('Back').setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId(`fbreset_${anc}_${ub}_${prof}_${distStr}_${age}`).setLabel('Reset Boosts').setEmoji('🔄').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId(`fbfinalize_${anc}_${ub}_${prof}_${distStr}_${age}`).setLabel('Finalize Audit').setEmoji('📜').setStyle(ButtonStyle.Success).setDisabled(pointsRemaining !== 0),
+        new ButtonBuilder().setCustomId(`origins_back_flaw_${anc}_${ub}_${prof}_${distStr}_${age}`).setLabel('Back').setStyle(ButtonStyle.Secondary)
     );
     rows.push(ctlRow);
     return interaction.editReply({ embeds: [embed], components: rows });
@@ -213,12 +335,11 @@ async function renderFreeBoostView(interaction, anc, ub, prof, distStr, age) {
 async function handleModal(interaction, action, args) {
     if (action === 'originsmodal') {
         const [anc, ub, prof, distStr, age] = args;
-        const dist = distStr.split('').map(Number);
+        const dist = distStr.split(',').map(Number);
         const rulerName = interaction.fields.getTextInputValue('ruler_name')?.trim();
         const description = interaction.fields.getTextInputValue('description')?.trim();
         const channelId = interaction.fields.getTextInputValue('channel_id')?.trim();
 
-        // Validate channel exists
         try {
             const chan = await interaction.client.channels.fetch(channelId);
             if (!chan) throw new Error('invalid');
@@ -234,10 +355,9 @@ async function handleModal(interaction, action, args) {
         applyBoosts(stats, UPBRINGINGS[ub].bonuses);
         applyBoosts(stats, PROFESSIONS[prof].bonuses);
         
-        const distKeys = ['stat_str', 'stat_mot', 'stat_int', 'stat_men', 'stat_wis', 'stat_cha'];
-        for (let i = 0; i < 6; i++) {
-            if (dist[i] > 0) stats[distKeys[i]] = applyBoost(stats[distKeys[i]], dist[i]);
-        }
+        const distKeys = ['stat_str', 'stat_mot', 'stat_men', 'stat_int', 'stat_wis', 'stat_cha'];
+        for (let i = 0; i < 6; i++)
+            stats[distKeys[i]] = applyBoost(stats[distKeys[i]], dist[i]);
 
         await db.run(`UPDATE users SET
             status = 'pending_audit', ancestry = ?, upbringing = ?, profession = ?, age = ?,

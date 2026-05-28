@@ -86,7 +86,7 @@ async function handleBattleCompositionSubmit(interaction, atkId, defId) {
 
         for (const col of cols) {
             let val = 0;
-            try { val = parseInt(interaction.fields.getTextInputValue(col)) || 0; } catch (_) {}
+            try { val = parseInt(interaction.fields.getTextInputValue(col)) || 0; } catch {}
             if (val < 0) return ephemeralReply(interaction, '⚠️ Values must be 0 or positive.');
             const max = col === 'mil_militia' ? totalMilitia : (atk[col] || 0);
             if (val > max) return ephemeralReply(interaction, `⚠️ Cannot commit more ${col} than you own (max ${max}).`);
@@ -94,10 +94,10 @@ async function handleBattleCompositionSubmit(interaction, atkId, defId) {
             totalFoodCost += val * 2;
         }
 
-        if ((atk.food_surplus || 0) < totalFoodCost)
+        if ((atk.food || 0) < totalFoodCost)
             return ephemeralReply(interaction, `⚠️ Insufficient supplies. Need **${totalFoodCost} 🥩**.`);
 
-        await db.run('UPDATE users SET food_surplus=food_surplus-? WHERE id=?', totalFoodCost, atk.id);
+        await db.run('UPDATE users SET food=food-? WHERE id=?', totalFoodCost, atk.id);
 
         const terrainKeys = Object.keys(TERRAINS);
         const terrainKey = terrainKeys[Math.floor(Math.random() * terrainKeys.length)];
@@ -206,12 +206,12 @@ async function handleBattleApprove(interaction, atkId, defId, compArgs, battleNa
     );
 
     if (chan) {
-        try { await chan.send({ content: `<@${defId}>`, embeds: [commitEmb], components: [commitRow] }); } catch (_) {}
+        try { await chan.send({ content: `<@${defId}>`, embeds: [commitEmb], components: [commitRow] }); } catch {}
     } else {
         try {
             const u = await interaction.client.users.fetch(defId);
             if (u) await u.send({ embeds: [commitEmb], components: [commitRow] });
-        } catch (_) {}
+        } catch {}
     }
 }
 
@@ -282,7 +282,7 @@ async function handleBattleResolve(interaction, atkId, defId, atkCompStr, format
     let defTotal = 0;
     for (const f of cols) {
         let val = 0;
-        try { val = parseInt(interaction.fields.getTextInputValue(f)) || 0; } catch (_) {}
+        try { val = parseInt(interaction.fields.getTextInputValue(f)) || 0; } catch {}
         if (val < 0) return ephemeralReply(interaction, '⚠️ Values must be 0 or positive.');
         const max = def[f] || 0;
         if (val > max) return ephemeralReply(interaction, `⚠️ Cannot commit more ${f.replace('mil_', '')} than you own (max ${max}).`);
@@ -291,9 +291,9 @@ async function handleBattleResolve(interaction, atkId, defId, atkCompStr, format
     }
 
     const defFood = defTotal * 2;
-    if ((def.food_surplus || 0) < defFood)
+    if ((def.food || 0) < defFood)
         return ephemeralReply(interaction, `⚠️ Insufficient food. Need **${defFood} 🥩**.`);
-    await db.run('UPDATE users SET food_surplus=MAX(0,food_surplus-?) WHERE id=?', defFood, def.id);
+    await db.run('UPDATE users SET food=MAX(0,food-?) WHERE id=?', defFood, def.id);
 
     // Build power objects
     const defComp = {
@@ -389,8 +389,8 @@ async function handleBattleResolve(interaction, atkId, defId, atkCompStr, format
                 isWin ? '+1 Prestige' : '-2 Prestige, -1 Stability'
             ].filter(Boolean).join('\n'));
         let sent = false;
-        if (chan) { try { await chan.send({ content: `<@${uid}>`, embeds: [emb] }); sent = true; } catch (_) {} }
-        if (!sent) { try { const u = await interaction.client.users.fetch(uid); if (u) await u.send({ embeds: [emb] }); } catch (_) {} }
+        if (chan) { try { await chan.send({ content: `<@${uid}>`, embeds: [emb] }); sent = true; } catch {} }
+        if (!sent) { try { const u = await interaction.client.users.fetch(uid); if (u) await u.send({ embeds: [emb] }); } catch {} }
     }
 
     // 20% chance of post-battle substat reward for winner
@@ -409,7 +409,7 @@ async function handleBattleResolve(interaction, atkId, defId, atkCompStr, format
                 new ButtonBuilder().setCustomId(`warbattle_ss_wis_${winnerId}`).setLabel('🕯️ WIS').setStyle(ButtonStyle.Primary),
                 new ButtonBuilder().setCustomId(`warbattle_ss_cha_${winnerId}`).setLabel('🎭 CHA').setStyle(ButtonStyle.Primary)
             );
-            try { await chan.send({ content: `<@${winnerId}>`, embeds: [emb], components: [row1, row2] }); } catch (_) {}
+            try { await chan.send({ content: `<@${winnerId}>`, embeds: [emb], components: [row1, row2] }); } catch {}
         }
     }
 }

@@ -194,7 +194,7 @@ async function handleButton(interaction, action, args) {
         // Refund food to attacker (stored as last arg in customId)
         const refund = parseInt(args[3]) || parseInt(args[4]) || 0;
         if (refund > 0)
-            await interaction.client.db.run('UPDATE users SET food_surplus=food_surplus+? WHERE id=?', refund, args[1]);
+            await interaction.client.db.run('UPDATE users SET food=food+? WHERE id=?', refund, args[1]);
         await interaction.update({ components: [], content: '❌ Battle rejected. Food refunded.' });
         return;
     }

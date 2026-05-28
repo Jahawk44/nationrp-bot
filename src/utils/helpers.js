@@ -40,10 +40,15 @@ async function resolveAtlasHQ(client, embed, components = []) {
 // ─── Stat boost engine (PF2e-style soft cap at 18) ───────────────────────────
 
 function applyBoost(current, amount = 0) {
-    if (!amount) return current;
+    if (!amount)
+        return current;
     let val = current;
-    for (let i = 0; i < amount; i++) {
-        val = val >= 18 ? val + 1 : val + 2;
+    if (amount > 0) {
+        for (let i = 0; i < amount; i++)
+            val = val >= 18 ? val + 1 : val + 2;
+    } else {
+        for (let i = 0; i < -amount; i++)
+            val = val > 18 ? val - 1 : val - 2;
     }
     return val;
 }
@@ -208,7 +213,7 @@ async function getNotificationChannel(client, user) {
     const id = user.notification_channel || user.last_tax_channel || process.env.ADMIN_CHANNEL_ID;
     if (!id) return null;
     try { return await client.channels.fetch(id); }
-    catch (_) { return null; }
+    catch { return null; }
 }
 
 // Sends a message to a player: tries DM first, falls back to interaction channel
@@ -216,12 +221,24 @@ async function sendToPlayer(client, interaction, userId, content) {
     try {
         const u = await client.users.fetch(userId);
         if (u) { await u.send(content); return; }
-    } catch (_) {}
+    } catch {}
     try {
         if (interaction && interaction.channel) {
             await interaction.channel.send(content);
         }
-    } catch (_) {}
+    } catch {}
+}
+
+// Sends a message to a player: tries notification channel first, then DM
+async function notifyPlayer(client, user, content) {
+    try {
+        const u = await client.users.fetch(user.id);
+        if (u) { await u.send(content); return; }
+    } catch {}
+    try {
+        channel = await getNotificationChannel(client, user);
+        if (channel) { await channel.send(content); }
+    } catch {}
 }
 
 async function getActivePlayers(db, excludeId) {
@@ -284,7 +301,7 @@ async function safeReply(interaction, options) {
 // Morale used by both warfare and colosseum systems
 function calcMorale(user) {
     const base = 100 + (user.rate_stab || 0) * 3 + (user.rate_prest || 0) * 2
-        - Math.max(0, -(user.food_surplus || 0)) * 5 - Math.floor((user.servus || 0) / 5) * 2;
+        - Math.max(0, -(user.food || 0)) * 5 - Math.floor((user.servus || 0) / 5) * 2;
     return Math.max(30, Math.min(150, base));
 }
 
@@ -334,7 +351,7 @@ async function initDB(db) {
         // Resources
         'ALTER TABLE users ADD COLUMN balance INTEGER DEFAULT 1000',
         'ALTER TABLE users ADD COLUMN wealth INTEGER DEFAULT 0',
-        'ALTER TABLE users ADD COLUMN food_surplus INTEGER DEFAULT 0',
+        'ALTER TABLE users ADD COLUMN food INTEGER DEFAULT 0',
         'ALTER TABLE users ADD COLUMN ores INTEGER DEFAULT 0',
         'ALTER TABLE users ADD COLUMN vitale INTEGER DEFAULT 0',
         'ALTER TABLE users ADD COLUMN exotics INTEGER DEFAULT 0',
@@ -392,7 +409,7 @@ async function initDB(db) {
         'CREATE TABLE IF NOT EXISTS pending_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, initiator_id TEXT, partner_id TEXT, give_resource TEXT, give_amount INTEGER, recv_resource TEXT, recv_amount INTEGER, status TEXT DEFAULT "pending", created_at INTEGER)',
     ];
     for (const sql of newTables) {
-        try { await db.run(sql); } catch (_) {}
+        try { await db.run(sql); } catch {}
     }
 
     for (const sql of migrations) {
@@ -483,7 +500,7 @@ module.exports = {
     calcStabMultiplier, getCharBonuses, calcNobleState,
     getWarningLevel, formatWarningBanner,
     getPlayerRank, isVitaleFree, getNotificationChannel,
-    sendToPlayer, getActivePlayers,
+    sendToPlayer, notifyPlayer, getActivePlayers,
     safeReply, ephemeralReply,
     calcMorale,
     calcMaintenance,

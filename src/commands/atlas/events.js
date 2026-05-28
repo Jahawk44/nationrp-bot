@@ -53,7 +53,7 @@ async function handleEventFire(interaction, type, targetId, severity, amount) {
             .setDescription(formatDesc(def.desc, severity))
             .setColor(def.color)
             .setFooter({ text: `Event ID: ${type} | Severity: ${severity}` });
-        try { await chan.send({ content: `<@${targetId}>`, embeds: [emb] }); } catch (_) {}
+        try { await chan.send({ content: `<@${targetId}>`, embeds: [emb] }); } catch {}
     }
 
     // Notify GM HQ
@@ -121,10 +121,10 @@ async function handleEventList(interaction, targetId) {
 
 function getAffectedFields(type, user) {
     switch (type) {
-        case 'famine':         return ['food_surplus', 'rate_stab'];
+        case 'famine':         return ['food', 'rate_stab'];
         case 'plague':         return ['pop_commoners', 'rate_stab'];
         case 'raid':           return ['wealth'];
-        case 'harvest':        return ['food_surplus', 'rate_stab'];
+        case 'harvest':        return ['food', 'rate_stab'];
         case 'noble_unrest':   return ['rate_prest'];
         case 'imperial_favor': return ['rate_prest', 'vitale'];
         case 'servus_uprising':return ['rate_stab', 'servus', 'wealth'];
@@ -137,7 +137,7 @@ async function applyEventEffects(db, user, type, severity, amount) {
     const sev = severity || 1;
     switch (type) {
         case 'famine':
-            await db.run('UPDATE users SET food_surplus=MAX(-9999,food_surplus-?), rate_stab=MAX(-10,rate_stab-?) WHERE id=?',
+            await db.run('UPDATE users SET food=MAX(-9999,food-?), rate_stab=MAX(-10,rate_stab-?) WHERE id=?',
                 500 * sev, sev, user.id);
             break;
         case 'plague':
@@ -150,7 +150,7 @@ async function applyEventEffects(db, user, type, severity, amount) {
                 500 * sev, user.id);
             break;
         case 'harvest':
-            await db.run('UPDATE users SET food_surplus=food_surplus+?, rate_stab=MIN(10,rate_stab+1) WHERE id=?',
+            await db.run('UPDATE users SET food=food+?, rate_stab=MIN(10,rate_stab+1) WHERE id=?',
                 2000 * sev, user.id);
             break;
         case 'noble_unrest':
@@ -177,7 +177,7 @@ async function handleServusUprising(db, user, sev) {
         if (warfare.handleRebellionEvent) {
             return await warfare.handleRebellionEvent(db, user);
         }
-    } catch (_) {}
+    } catch {}
     await db.run('UPDATE users SET rate_stab=MAX(-10,rate_stab-?), servus=MAX(0,servus-10), wealth=MAX(0,wealth-1000) WHERE id=?',
         3 * sev, user.id);
 }

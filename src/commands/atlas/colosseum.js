@@ -279,7 +279,7 @@ async function handleSelect(interaction, action, args) {
 
             const modal = new ModalBuilder().setCustomId(`colo_betmod_${duelId}_${uid}`).setTitle('💰 Place Bet');
             modal.addComponents(
-                new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('amt').setLabel('Amount (:coin:)').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('100')),
+                new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('amt').setLabel('Amount (🪙)').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('100')),
                 new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('bet_on').setLabel('Bet on (c=challenger, d=defender)').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('c'))
             );
             return await interaction.showModal(modal);
@@ -310,7 +310,7 @@ async function handleModal(interaction, action, args) {
 
         const user = await db.get('SELECT balance FROM users WHERE id=?', uid);
         const maxBet = Math.floor((user.balance || 0) * 0.10);
-        if (amt > maxBet) return ephemeralReply(interaction, `⚠️ Max bet is 10% of balance: **${maxBet} :coin:**.`);
+        if (amt > maxBet) return ephemeralReply(interaction, `⚠️ Max bet is 10% of balance: **${maxBet} 🪙**.`);
 
         const duel = await db.get('SELECT * FROM duels WHERE id=?', duelId);
         if (!duel || duel.status === 'completed') return ephemeralReply(interaction, '⚠️ Duel not available.');
@@ -329,7 +329,7 @@ async function handleModal(interaction, action, args) {
         await db.run('INSERT INTO bets (duel_id, bettor_id, amount, bet_on, odds, created_at) VALUES (?,?,?,?,?,?)',
             duelId, uid, amt, betOn, odds, Date.now());
 
-        return ephemeralReply(interaction, `💰 Bet **${amt} :coin:** on **${betOn === 'c' ? 'Challenger' : 'Defender'}** at **${odds.toFixed(1)}x** odds.`);
+        return ephemeralReply(interaction, `💰 Bet **${amt} 🪙** on **${betOn === 'c' ? 'Challenger' : 'Defender'}** at **${odds.toFixed(1)}x** odds.`);
     }
 }
 

@@ -260,7 +260,7 @@ async function handleModal(interaction, action, args) {
         await interaction.deferUpdate();
 
         const user = await db.get('SELECT balance FROM users WHERE id=?', interaction.user.id);
-        if ((user.balance || 0) < 1000) return interaction.editReply({ content: '⚠️ Renaming costs **1,000 :coin:**.' });
+        if ((user.balance || 0) < 1000) return interaction.editReply({ content: '⚠️ Renaming costs **1,000 🪙**.' });
 
         const check = await db.get('SELECT id FROM towns WHERE user_id=? AND LOWER(name)=?', interaction.user.id, newName.toLowerCase());
         if (check) return interaction.editReply({ content: '⚠️ You already have a town with that name.' });
@@ -292,7 +292,7 @@ async function handleModal(interaction, action, args) {
 
         if (cost > 0) await db.run('UPDATE users SET wealth = wealth - ? WHERE id = ?', cost, interaction.user.id);
         await db.run('INSERT INTO towns (user_id, name, terrain_type, plots_total, fertility) VALUES (?, ?, ?, ?, ?)', interaction.user.id, name, tType, plots, fert);
-        await db.run('UPDATE users SET food_surplus = COALESCE(food_surplus, 0) + 500 WHERE id = ?', interaction.user.id);
+        await db.run('UPDATE users SET food = COALESCE(food, 0) + 500 WHERE id = ?', interaction.user.id);
         
         if (settlements.length === 0) {
             await interaction.followUp({ content: '💡 **TIPS FROM HIGH COMMAND:** Your first settlement is founded! Every town needs **Food** and **Ores** to thrive. Build a **Farm** or **Livestock** immediately to feed your growing population.', ephemeral: true });

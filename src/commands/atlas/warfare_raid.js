@@ -83,7 +83,7 @@ async function handleRaidCompositionSubmit(interaction, atkId, defId, townNameEn
     const counts = {};
     for (let i = 0; i < modalFields.length; i++) {
         let val = 0;
-        try { val = parseInt(interaction.fields.getTextInputValue(modalFields[i])) || 0; } catch (_) {}
+        try { val = parseInt(interaction.fields.getTextInputValue(modalFields[i])) || 0; } catch {}
         if (val < 0) return ephemeralReply(interaction, '⚠️ Values must be 0 or positive.');
         const max = atk[atkCols[i]] || 0;
         if (val > max) return ephemeralReply(interaction, `⚠️ Cannot commit more than you own (max ${max}).`);
@@ -91,10 +91,10 @@ async function handleRaidCompositionSubmit(interaction, atkId, defId, townNameEn
     }
 
     const totalCost = Object.values(counts).reduce((s, v) => s + v, 0) * 2;
-    if ((atk.food_surplus || 0) < totalCost)
+    if ((atk.food || 0) < totalCost)
         return ephemeralReply(interaction, `⚠️ Insufficient supplies. Need **${totalCost} 🥩**.`);
 
-    await db.run('UPDATE users SET food_surplus=food_surplus-? WHERE id=?', totalCost, atk.id);
+    await db.run('UPDATE users SET food=food-? WHERE id=?', totalCost, atk.id);
 
     // Encode force counts into a compact string for the GM approve button
     const compStr = `${counts.inf}_${counts.cav}_${counts.rng}_${counts.sie}_${counts.mercs}`;

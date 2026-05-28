@@ -26,7 +26,7 @@ async function setupDatabase() {
             balance INTEGER DEFAULT 1000,
             wealth INTEGER DEFAULT 0,
             exotics INTEGER DEFAULT 0,
-            food_surplus INTEGER DEFAULT 0,
+            food INTEGER DEFAULT 0,
             ores INTEGER DEFAULT 0,
             vitale INTEGER DEFAULT 0,
             servus INTEGER DEFAULT 0,
@@ -101,7 +101,6 @@ async function setupDatabase() {
         INSERT OR IGNORE INTO global_settings (key, value) VALUES ('current_turn', '1');
         INSERT OR IGNORE INTO global_settings (key, value) VALUES ('empire_ruler', 'Tyrannite');
         INSERT OR IGNORE INTO global_settings (key, value) VALUES ('vitale_base', '15');
-        INSERT OR IGNORE INTO global_settings (key, value) VALUES ('vitale_sold_week', '0');
     `);
 
     return db;

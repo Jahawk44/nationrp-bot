@@ -1,12 +1,14 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { RESOURCES } = require('../../data/constants');
-const { getNotificationChannel, resolveAtlasHQ } = require('../../utils/helpers');
+const { getNotificationChannel, notifyPlayer } = require('../../utils/helpers');
 
 const NPC_TEXTS = {
     styx:    'Imperial merchants arrive. Wealth exchanged for Vitale at current market rates.',
     sciatic: 'Sciatic traders deliver goods from distant ports.',
     caossa:  'A Caossi caravan arrives bearing ore and worked metal.'
 };
+
+const VALID_RESOURCES = new Set(['balance', 'wealth', 'food', 'ores', 'metallurgy', 'vitale', 'exotics', 'servus']);
 
 async function handleTradeRouteList(interaction) {
     const db = interaction.client.db;
@@ -19,7 +21,7 @@ async function handleTradeRouteList(interaction) {
     const lines = routes.map(r => {
         const partnerLabel = r.partner_type === 'player'
             ? `<@${r.partner_id}>` : r.partner_type.charAt(0).toUpperCase() + r.partner_type.slice(1);
-        return `**#${r.id}** | ${partnerLabel} | Give: ${r.give_amount} ${r.give_resource} → Receive: ${r.receive_amount} ${r.receive_resource} | ${r.turns_remaining}/${r.duration_turns} turns | ${r.status}`;
+        return `**#${r.id}** | ${partnerLabel} | Give: ${r.give_amount.toLocaleString('en-US')} ${r.give_resource} → Receive: ${r.receive_amount.toLocaleString('en-US')} ${r.receive_resource} | ${r.turns_remaining.toLocaleString('en-US')}/${r.duration_turns.toLocaleString('en-US')} turns | ${r.status}`;
     });
     const embed = new EmbedBuilder().setTitle('🔄 TRADE ROUTES').setColor(0x00BFFF).setDescription(lines.join('\n'));
     return interaction.editReply({ embeds: [embed] });
@@ -39,8 +41,6 @@ async function handleTradeRoutePropose(interaction) {
     if (giveRes === recvRes) return interaction.editReply({ content: '⚠️ Cannot trade the same resource.' });
     if (!RESOURCES[giveRes.toUpperCase()] || !RESOURCES[recvRes.toUpperCase()])
         return interaction.editReply({ content: '⚠️ Invalid resource type.' });
-
-    const user = await db.get('SELECT * FROM users WHERE id=?', interaction.user.id);
 
     // Relation embargo check — blocked only when Hostile (≤ −10). No positive-relation requirement.
     if (partnerType === 'sciatic') {
@@ -75,7 +75,7 @@ async function handleTradeRoutePropose(interaction) {
                 new ButtonBuilder().setCustomId(`traderoute_a_${routeId}`).setLabel('Accept').setStyle(ButtonStyle.Success),
                 new ButtonBuilder().setCustomId(`traderoute_r_${routeId}`).setLabel('Reject').setStyle(ButtonStyle.Danger)
             );
-            try { await chan.send({ content: `<@${partnerId}>`, embeds: [emb], components: [row] }); } catch (_) {}
+            try { await chan.send({ content: `<@${partnerId}>`, embeds: [emb], components: [row] }); } catch {}
         }
         return interaction.editReply({ content: `📨 Trade route proposal sent to <@${partnerId}>. Awaiting their response.` });
     }
@@ -101,8 +101,9 @@ async function handleTradeRouteCancel(interaction, routeId) {
 
 async function handleRouteAccept(interaction, routeId) {
     const db = interaction.client.db;
-    const route = await db.get(        `SELECT * FROM trade_routes WHERE id=? AND partner_id=? AND status='pending'`, routeId, interaction.user.id);
-    return ephemeralReply(interaction, '⚠️ This proposal is no longer valid.');
+    const route = await db.get(`SELECT * FROM trade_routes WHERE id=? AND partner_id=? AND status='pending'`, routeId, interaction.user.id);
+    if (!route)
+        return ephemeralReply(interaction, '⚠️ This proposal is no longer valid.');
 
     await db.run(`UPDATE trade_routes SET status='active' WHERE id=?`, routeId);
 
@@ -111,14 +112,15 @@ async function handleRouteAccept(interaction, routeId) {
 
     const chan = await getNotificationChannel(interaction.client, { id: route.initiator_id, notification_channel: null, last_tax_channel: null });
     if (chan) {
-        try { await chan.send({ content: `✅ <@${route.initiator_id}> — Your trade route proposal to <@${interaction.user.id}> was **accepted**.` }); } catch (_) {}
+        try { await chan.send({ content: `✅ <@${route.initiator_id}> — Your trade route proposal to <@${interaction.user.id}> was **accepted**.` }); } catch {}
     }
 }
 
 async function handleRouteReject(interaction, routeId) {
     const db = interaction.client.db;
     const route = await db.get(        `SELECT * FROM trade_routes WHERE id=? AND partner_id=? AND status='pending'`, routeId, interaction.user.id);
-    return ephemeralReply(interaction, '⚠️ This proposal is no longer valid.');
+    if (!route)
+        return ephemeralReply(interaction, '⚠️ This proposal is no longer valid.');
 
     await db.run(`UPDATE trade_routes SET status='broken' WHERE id=?`, routeId);
 
@@ -127,79 +129,205 @@ async function handleRouteReject(interaction, routeId) {
 
     const chan = await getNotificationChannel(interaction.client, { id: route.initiator_id, notification_channel: null, last_tax_channel: null });
     if (chan) {
-        try { await chan.send({ content: `❌ <@${route.initiator_id}> — Your trade route proposal to <@${interaction.user.id}> was **rejected**.` }); } catch (_) {}
+        try { await chan.send({ content: `❌ <@${route.initiator_id}> — Your trade route proposal to <@${interaction.user.id}> was **rejected**.` }); } catch {}
     }
 }
 
-// Weekly route resolution — called from scheduler.js
+/**
+ * Processes one scheduler tick for all active trade routes.
+ * Called by the weekly scheduler (Monday 00:00) AFTER the demand pool reset.
+ *
+ * Faction routes: recalculates receive amount live from S&D + relations each tick.
+ * Player routes:  fixed amounts agreed at route creation; breaks if either side is short.
+ */
 async function processTradeRoutes(db, client) {
-    const routes = await db.all(`SELECT * FROM trade_routes WHERE status IN ('active','tribute')`);
-    for (const route of routes) {
-        try {
-            const user = await db.get('SELECT * FROM users WHERE id=?', route.initiator_id);
-            if (!user) continue;
+    const { calculateFactionRouteReturn, FACTION_DB_NAMES } = require('./economy');
 
-            // Check can pay
-            if ((user[route.give_resource] || 0) < route.give_amount) {
-                await db.run(`UPDATE trade_routes SET status='paused' WHERE id=?`, route.id);
-                const chan = await getNotificationChannel(client, user);
-                if (chan) await chan.send({ content: `⚠️ <@${route.initiator_id}> Your trade route paused — insufficient ${route.give_resource}.` });
+    // ── 1. Faction routes ─────────────────────────────────────────────────────
+    const factionRoutes = await db.all(
+        "SELECT * FROM trade_routes WHERE partner_type IN ('styx','sciatic','caossa') AND status='active'"
+    );
+
+    for (const route of factionRoutes) {
+        try {
+            // Guard against corrupted resource names reaching SQL
+            if (!VALID_RESOURCES.has(route.give_resource) || !VALID_RESOURCES.has(route.receive_resource)) {
+                console.error(`[TRADE ROUTES] Route #${route.id} has invalid resource column — skipping.`);
                 continue;
             }
 
-            let receiveAmount = route.receive_amount;
+            // Relation check — pause if hostile
+            const factionDbName = FACTION_DB_NAMES[route.partner_type];
+            const rel = factionDbName
+                ? await db.get('SELECT score FROM relations WHERE user_id=? AND faction_name=?',
+                               route.initiator_id, factionDbName)
+                : null;
+            const relScore = rel?.score ?? 0;
 
-            // Styx: dynamic Vitale pricing at resolution
-            if (route.partner_type === 'styx') {
-                const vBase  = parseInt((await db.get(`SELECT value FROM global_settings WHERE key='vitale_base'`))?.value || '15');
-                const vSold  = parseInt((await db.get(`SELECT value FROM global_settings WHERE key='vitale_sold_week'`))?.value || '0');
-                const pCount = (await db.get(`SELECT COUNT(*) as c FROM users WHERE status='active'`))?.c || 1;
-                const pool   = vBase + (10 * pCount);
-                const price  = Math.floor(50 * (1 + (vSold / Math.max(1, pool)) * 4));
-                receiveAmount = Math.floor(route.give_amount / price);
-                if (receiveAmount < 1) {
-                    const chan = await getNotificationChannel(client, user);
-                    if (chan) await chan.send({ content: `⚠️ <@${route.initiator_id}> Vitale price too high this week — Styx route skipped.` });
-                    continue;
-                }
-                await db.run(`UPDATE global_settings SET value=CAST(value AS INTEGER)+? WHERE key='vitale_sold_week'`, receiveAmount);
+            const user = await db.get(
+                `SELECT ${route.give_resource}, ${route.receive_resource} FROM users WHERE id=?`,
+                route.initiator_id
+            );
+
+            if (relScore <= -10) {
+                await db.run("UPDATE trade_routes SET status='paused' WHERE id=?", route.id);
+                await notifyPlayer(client, user, {
+                    content: `⚠️ Trade route #${route.id} with **${factionDbName}** has been **paused** — your relations fell to Hostile (${relScore}). Restore standing above −10 to resume.`,
+                });
+                console.log(`[TRADE ROUTES] Route #${route.id} paused — hostile relations (${relScore}).`);
+                continue;
             }
 
-            // Execute exchange
-            await db.run(`UPDATE users SET ${route.give_resource}=${route.give_resource}-? WHERE id=?`, route.give_amount, route.initiator_id);
-            await db.run(`UPDATE users SET ${route.receive_resource}=COALESCE(${route.receive_resource},0)+? WHERE id=?`, receiveAmount, route.initiator_id);
-
-            // Player-to-player: reverse leg for partner
-            if (route.partner_type === 'player' && route.partner_id) {
-                await db.run(`UPDATE users SET ${route.receive_resource}=${route.receive_resource}-? WHERE id=?`, receiveAmount, route.partner_id);
-                await db.run(`UPDATE users SET ${route.give_resource}=COALESCE(${route.give_resource},0)+? WHERE id=?`, route.give_amount, route.partner_id);
+            // Check if the player still has enough to give this tick
+            if (!user || (user[route.give_resource] || 0) < route.give_amount) {
+                // Skip rather than break — player may recover next turn
+                await notifyPlayer(client, user, {
+                    content: `⚠️ Trade route #${route.id} skipped this turn — insufficient **${route.give_resource}** (need ${route.give_amount.toLocaleString('en-US')}, have ${(user?.[route.give_resource] || 0).toLocaleString('en-US')}).`,
+                });
+                console.log(`[TRADE ROUTES] Route #${route.id} skipped — insufficient ${route.give_resource}.`);
+                continue;
             }
 
-            // Post NPC route notification
-            if (NPC_TEXTS[route.partner_type]) {
-                const chan = await getNotificationChannel(client, user);
-                if (chan) await chan.send({ content: `🔄 <@${route.initiator_id}> Trade route settled. ${NPC_TEXTS[route.partner_type]}` });
+            // Execute: integral-based receive amount, demand pool updated inside
+            const { recvAmount, breakdown } = await calculateFactionRouteReturn(db, route, relScore);
+
+            if (recvAmount <= 0) {
+                await notifyPlayer(client, user, {
+                    content: `⚠️ Trade route #${route.id} skipped — market fully saturated for **${route.receive_resource}**. It will resume after the Monday reset.`,
+                });
+                continue;
             }
 
-            // Decrement turns
-            await db.run('UPDATE trade_routes SET turns_remaining=turns_remaining-1 WHERE id=?', route.id);
-            if (route.turns_remaining - 1 <= 0) {
-                await db.run("UPDATE trade_routes SET status='completed' WHERE id=?", route.id);
-                const chan = await getNotificationChannel(client, user);
-                if (chan) await chan.send({ content: `✅ <@${route.initiator_id}> Your trade route #${route.id} has completed after ${route.duration_turns} turns.` });
-            }
+            // Deduct give, credit receive
+            await db.run(
+                `UPDATE users SET
+                    ${route.give_resource}    = MAX(0, COALESCE(${route.give_resource},    0) - ?),
+                    ${route.receive_resource} = COALESCE(${route.receive_resource}, 0) + ?
+                 WHERE id = ?`,
+                route.give_amount, recvAmount, route.initiator_id
+            );
+
+            // Manage turns_remaining and completion
+            const newTurns = route.turns_remaining !== null ? route.turns_remaining - 1 : null;
+            const isComplete = newTurns !== null && newTurns <= 0;
+
+            await db.run(
+                "UPDATE trade_routes SET turns_remaining=?, status=? WHERE id=?",
+                isComplete ? 0 : newTurns,
+                isComplete ? 'completed' : 'active',
+                route.id
+            );
+
+            const avgRate = (recvAmount / route.give_amount).toFixed(4);
+            const turnsMsg = isComplete
+                ? `\n✅ Route completed — all turns fulfilled.`
+                : newTurns !== null ? `\n${newTurns} turn(s) remaining.` : '';
+            const overflowWarn = breakdown.overflow > 0
+                ? `\n⚠️ ${breakdown.overflow.toLocaleString('en-US')} units traded at floor rate (pool saturated). Consider a smaller per-turn amount.`
+                : '';
+
+            await notifyPlayer(client, user, {
+                content: [
+                    `📦 **Trade route #${route.id} executed:**`,
+                    `Gave **${route.give_amount.toLocaleString('en-US')} ${route.give_resource}** → received **${recvAmount.toLocaleString('en-US')} ${route.receive_resource}** (avg rate: ${avgRate})`,
+                    overflowWarn,
+                    turnsMsg,
+                ].filter(Boolean).join('\n'),
+            });
+
+            console.log(`[TRADE ROUTES] Faction route #${route.id} (${route.partner_type}): gave ${route.give_amount} ${route.give_resource}, received ${recvAmount} ${route.receive_resource}.`);
+
         } catch (err) {
-            console.error(`[TRADE] Route ${route.id} failed:`, err.message);
+            console.error(`[TRADE ROUTES] Faction route #${route.id} failed:`, err.message);
         }
     }
-}
 
+    // ── 2. Player-to-player routes ────────────────────────────────────────────
+    const playerRoutes = await db.all(
+        "SELECT * FROM trade_routes WHERE partner_type='player' AND status='active'"
+    );
+
+    for (const route of playerRoutes) {
+        try {
+            if (!VALID_RESOURCES.has(route.give_resource) || !VALID_RESOURCES.has(route.receive_resource)) {
+                console.error(`[TRADE ROUTES] Player route #${route.id} has invalid resource — skipping.`);
+                continue;
+            }
+
+            const initiator = await db.get(
+                `SELECT ${route.give_resource} FROM users WHERE id=?`, route.initiator_id
+            );
+            const partner = await db.get(
+                `SELECT ${route.receive_resource} FROM users WHERE id=?`, route.partner_id
+            );
+
+            const initHas = initiator?.[route.give_resource]   || 0;
+            const partHas = partner?.[route.receive_resource]  || 0;
+
+            // If either side can't deliver, break the route
+            if (initHas < route.give_amount || partHas < route.receive_amount) {
+                await db.run("UPDATE trade_routes SET status='broken' WHERE id=?", route.id);
+                const shortUser = initHas < route.give_amount ? initiator : partner;
+                const otherUser = initHas < route.give_amount ? partner : initiator;
+                const bothShort = initHas < route.give_amount && partHas < route.receive_amount;
+                await notifyPlayer(client, shortUser, { content: `💔 Trade route #${route.id} **broken** — you lacked sufficient resources for this turn's payment.` });
+                await notifyPlayer(client, otherUser, { content: bothShort ? `💔 Trade route #${route.id} **broken** — you lacked sufficient resources for this turn's payment.` : `💔 Trade route #${route.id} **broken** — your partner lacked resources to fulfill their side.` });
+                console.log(`[TRADE ROUTES] Player route #${route.id} broken — insufficient resources.`);
+                continue;
+            }
+
+            // Initiator: give → receive
+            await db.run(
+                `UPDATE users SET
+                    ${route.give_resource}    = MAX(0, COALESCE(${route.give_resource},    0) - ?),
+                    ${route.receive_resource} = COALESCE(${route.receive_resource}, 0) + ?
+                 WHERE id = ?`,
+                route.give_amount, route.receive_amount, route.initiator_id
+            );
+            // Partner: receive → give
+            await db.run(
+                `UPDATE users SET
+                    ${route.receive_resource} = MAX(0, COALESCE(${route.receive_resource}, 0) - ?),
+                    ${route.give_resource}    = COALESCE(${route.give_resource},    0) + ?
+                 WHERE id = ?`,
+                route.receive_amount, route.give_amount, route.partner_id
+            );
+
+            const newTurns = route.turns_remaining !== null ? route.turns_remaining - 1 : null;
+            const isComplete = newTurns !== null && newTurns <= 0;
+
+            await db.run(
+                "UPDATE trade_routes SET turns_remaining=?, status=? WHERE id=?",
+                isComplete ? 0 : newTurns,
+                isComplete ? 'completed' : 'active',
+                route.id
+            );
+
+            const turnsMsg = isComplete ? `✅ Route completed.` : newTurns !== null ? `${newTurns} turn(s) remaining.` : 'Indefinite route continues.';
+            await notifyPlayer(client, initiator, {
+                content: `📦 Route #${route.id}: gave **${route.give_amount.toLocaleString('en-US')} ${route.give_resource}**, received **${route.receive_amount.toLocaleString('en-US')} ${route.receive_resource}**. ${turnsMsg}`,
+            });
+            await notifyPlayer(client, partner, {
+                content: `📦 Route #${route.id}: gave **${route.receive_amount.toLocaleString('en-US')} ${route.receive_resource}**, received **${route.give_amount.toLocaleString('en-US')} ${route.give_resource}**. ${turnsMsg}`,
+            });
+
+            console.log(`[TRADE ROUTES] Player route #${route.id}: ${route.initiator_id} ↔ ${route.partner_id} tick complete.`);
+
+        } catch (err) {
+            console.error(`[TRADE ROUTES] Player route #${route.id} failed:`, err.message);
+        }
+    }
+
+    const total = factionRoutes.length + playerRoutes.length;
+    console.log(`[TRADE ROUTES] Processed ${total} route(s) (${factionRoutes.length} faction, ${playerRoutes.length} player).`);
+}
 
 function handleButton(interaction, action, args) {
     if (action === 'traderoute') {
         const sub = args[0];
         const routeId = parseInt(args[1]);
-        return ephemeralReply(interaction, '⚠️ Invalid route ID.');
+        if (!routeId)
+            return ephemeralReply(interaction, '⚠️ Invalid route ID.');
         if (sub === 'a') return handleRouteAccept(interaction, routeId);
         if (sub === 'r') return handleRouteReject(interaction, routeId);
     }

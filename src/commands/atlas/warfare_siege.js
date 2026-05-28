@@ -53,14 +53,14 @@ async function handleSiegeInitiate(interaction) {
     if (!town) return interaction.editReply({ content: '⚠️ Target town not found.' });
 
     const atkFood = siegeFoodCostAtk(atk);
-    if ((atk.food_surplus || 0) < atkFood)
+    if ((atk.food || 0) < atkFood)
         return interaction.editReply({ content: `⚠️ Need **${atkFood} 🥩** to lay siege.` });
-    await db.run('UPDATE users SET food_surplus=food_surplus-? WHERE id=?', atkFood, atk.id);
+    await db.run('UPDATE users SET food=food-? WHERE id=?', atkFood, atk.id);
 
     const defFood     = siegeFoodCostDef(def);
-    const defSupplied = (def.food_surplus || 0) >= defFood;
+    const defSupplied = (def.food || 0) >= defFood;
     if (defSupplied)
-        await db.run('UPDATE users SET food_surplus=food_surplus-? WHERE id=?', defFood, def.id);
+        await db.run('UPDATE users SET food=food-? WHERE id=?', defFood, def.id);
 
     const siegeName = generateBattleName('SIEGE', {
         townName: town.name,
@@ -104,7 +104,7 @@ async function handleSiegeConfirm(interaction, atkId, defId, townId) {
         attackerRulerName: atk.ruler_name
     });
 
-    const defSupplied = (def.food_surplus || 0) >= siegeFoodCostDef(def);
+    const defSupplied = (def.food || 0) >= siegeFoodCostDef(def);
 
     const atkRoll  = Math.floor(Math.random() * 20) + 1;
     const defRoll  = Math.floor(Math.random() * 20) + 1;
@@ -175,8 +175,8 @@ async function handleSiegeConfirm(interaction, atkId, defId, townId) {
             .setColor(isWin ? 0x00FF88 : 0xFF0000)
             .setDescription(`${siegeName}\nAtk: ${atkPower} vs Def: ${defPower}${!defSupplied ? ' *(defender undersupplied)*' : ''}\n${isWin ? '+2 Prestige' : atkWins ? '-3 Stability' : '-2 Stability'}`);
         let sent = false;
-        if (chan) { try { await chan.send({ content: `<@${uid}>`, embeds: [emb] }); sent = true; } catch (_) {} }
-        if (!sent) { try { const u = await interaction.client.users.fetch(uid); if (u) await u.send({ embeds: [emb] }); } catch (_) {} }
+        if (chan) { try { await chan.send({ content: `<@${uid}>`, embeds: [emb] }); sent = true; } catch {} }
+        if (!sent) { try { const u = await interaction.client.users.fetch(uid); if (u) await u.send({ embeds: [emb] }); } catch {} }
     }
 }
 
