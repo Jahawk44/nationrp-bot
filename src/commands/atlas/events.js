@@ -53,7 +53,7 @@ async function handleEventFire(interaction, type, targetId, severity, amount) {
             .setDescription(formatDesc(def.desc, severity))
             .setColor(def.color)
             .setFooter({ text: `Event ID: ${type} | Severity: ${severity}` });
-        try { await chan.send({ content: `<@${targetId}>`, embeds: [emb] }); } catch (_) {}
+        try { await chan.send({ content: `<@${targetId}>`, embeds: [emb] }); } catch {}
     }
 
     // Notify GM HQ
@@ -177,7 +177,7 @@ async function handleServusUprising(db, user, sev) {
         if (warfare.handleRebellionEvent) {
             return await warfare.handleRebellionEvent(db, user);
         }
-    } catch (_) {}
+    } catch {}
     await db.run('UPDATE users SET rate_stab=MAX(-10,rate_stab-?), servus=MAX(0,servus-10), wealth=MAX(0,wealth-1000) WHERE id=?',
         3 * sev, user.id);
 }

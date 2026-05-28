@@ -83,7 +83,7 @@ async function handleRaidCompositionSubmit(interaction, atkId, defId, townNameEn
     const counts = {};
     for (let i = 0; i < modalFields.length; i++) {
         let val = 0;
-        try { val = parseInt(interaction.fields.getTextInputValue(modalFields[i])) || 0; } catch (_) {}
+        try { val = parseInt(interaction.fields.getTextInputValue(modalFields[i])) || 0; } catch {}
         if (val < 0) return ephemeralReply(interaction, '⚠️ Values must be 0 or positive.');
         const max = atk[atkCols[i]] || 0;
         if (val > max) return ephemeralReply(interaction, `⚠️ Cannot commit more than you own (max ${max}).`);

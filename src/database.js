@@ -101,7 +101,6 @@ async function setupDatabase() {
         INSERT OR IGNORE INTO global_settings (key, value) VALUES ('current_turn', '1');
         INSERT OR IGNORE INTO global_settings (key, value) VALUES ('empire_ruler', 'Tyrannite');
         INSERT OR IGNORE INTO global_settings (key, value) VALUES ('vitale_base', '15');
-        INSERT OR IGNORE INTO global_settings (key, value) VALUES ('vitale_sold_week', '0');
     `);
 
     return db;

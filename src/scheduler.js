@@ -13,17 +13,16 @@ function initScheduler(client) {
             const newTurn = (parseInt(row?.value) || 0) + 1;
 
             await db.run('UPDATE global_settings SET value = ? WHERE key = "current_turn"', newTurn.toString());
-            await db.run('UPDATE global_settings SET value = "0" WHERE key = "vitale_sold_week"');
             await db.run('UPDATE global_settings SET value = "0" WHERE key LIKE "demand_%"');
 
             // Process weekly trade routes
             await processTradeRoutes(db, client);
 
-            // Wipe temp mercenaries each turn (Ticket 8.1)
+            // Wipe temp mercenaries each turn
             const mercWipe = await db.run('UPDATE users SET mercs_temp = 0 WHERE mercs_temp > 0');
             if (mercWipe.changes > 0) console.log(`[SCHEDULER] Mercenaries disbanded (${mercWipe.changes} players).`);
 
-            console.log(`[SCHEDULER] Turn ${newTurn}. Vitale market reset.`);
+            console.log(`[SCHEDULER] Turn ${newTurn}. Vitale & general trade market reset.`);
 
             // Turn notification → #main-hall, not atlas-hq
             const mainHallId = process.env.MAIN_HALL_ID || '1502560573710270555';
@@ -57,7 +56,7 @@ function initScheduler(client) {
                     if (channel) {
                         await channel.send({ content: `<@${u.id}> 🏛️ Your Imperial Tax is ready to be collected! Use \`/atlas tax\`.` });
                     }
-                } catch (_) {}
+                } catch {}
             }
 
             // Global reset: Mark everyone as ready to be notified again on their next cycle
@@ -97,7 +96,7 @@ function initScheduler(client) {
 
                 let delta = 0;
                 if (food > 0) {
-                    delta = (Math.random() * 0.2 + 0.9) // +- 10% variation
+                    delta = (Math.random() * 0.2 + 0.9) // ±10% variation
                         * Math.pow(currentPop, 0.13 * Math.log10(currentPop)) // increase growth based off population
                         * Math.sqrt(food) * Math.log10(food) // increase growth based off food surplus
                         * Math.min(1, food / currentPop) // decrease growth if there's not enough food surplus to feed everyone
@@ -165,7 +164,7 @@ function initScheduler(client) {
                 await db.run(`
                     UPDATE users SET
                         pop_commoners         = MAX(0, pop_commoners + ?),
-                        food          = MAX(0, ?),
+                        food                  = MAX(0, ?),
                         mil_militia           = MAX(0, mil_militia   - ?),
                         mil_spearmen          = MAX(0, mil_spearmen  - ?),
                         mil_swordsman         = MAX(0, mil_swordsman - ?),

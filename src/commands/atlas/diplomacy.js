@@ -286,7 +286,7 @@ async function handleTreatyPlayerSelect(interaction, userId, treatyType) {
             new ButtonBuilder().setCustomId(`treaty_accept_${treatyId}`).setLabel('Accept').setStyle(ButtonStyle.Success),
             new ButtonBuilder().setCustomId(`treaty_reject_${treatyId}`).setLabel('Reject').setStyle(ButtonStyle.Danger)
         );
-        try { await chan.send({ content: `<@${partnerId}>`, embeds: [emb], components: [row] }); } catch (_) {}
+        try { await chan.send({ content: `<@${partnerId}>`, embeds: [emb], components: [row] }); } catch {}
     }
 
     await interaction.update({ content: `📨 Treaty proposal sent to <@${partnerId}>.`, embeds: [], components: [] });
@@ -313,7 +313,7 @@ async function handleTreatyAccept(interaction, treatyId) {
 
     const chan = await getNotificationChannel(interaction.client, { id: treaty.initiator_id, notification_channel: null, last_tax_channel: null });
     if (chan) {
-        try { await chan.send({ content: `✅ <@${treaty.initiator_id}> — Your **${treaty.treaty_type.replace(/[-_]/g, ' ')}** treaty with <@${interaction.user.id}> was **accepted**.` }); } catch (_) {}
+        try { await chan.send({ content: `✅ <@${treaty.initiator_id}> — Your **${treaty.treaty_type.replace(/[-_]/g, ' ')}** treaty with <@${interaction.user.id}> was **accepted**.` }); } catch {}
     }
 }
 
@@ -329,7 +329,7 @@ async function handleTreatyReject(interaction, treatyId) {
 
     const chan = await getNotificationChannel(interaction.client, { id: treaty.initiator_id, notification_channel: null, last_tax_channel: null });
     if (chan) {
-        try { await chan.send({ content: `❌ <@${treaty.initiator_id}> — Your **${treaty.treaty_type.replace(/[-_]/g, ' ')}** treaty with <@${interaction.user.id}> was **rejected**.` }); } catch (_) {}
+        try { await chan.send({ content: `❌ <@${treaty.initiator_id}> — Your **${treaty.treaty_type.replace(/[-_]/g, ' ')}** treaty with <@${interaction.user.id}> was **rejected**.` }); } catch {}
     }
 }
 
@@ -349,7 +349,7 @@ async function handleTreatyDissolve(interaction) {
     for (const uid of [initiatorId, partnerId]) {
         const chan = await getNotificationChannel(interaction.client, { id: uid, notification_channel: null, last_tax_channel: null });
         if (chan) {
-            try { await chan.send({ content: `⚠️ <@${uid}> Your **${type}** treaty has been dissolved by the High Command.` }); } catch (_) {}
+            try { await chan.send({ content: `⚠️ <@${uid}> Your **${type}** treaty has been dissolved by the High Command.` }); } catch {}
         }
     }
     return interaction.editReply({ content: `⚖️ Treaty dissolved. Both parties notified.` });

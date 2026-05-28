@@ -2,46 +2,149 @@ const {
     EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle,
     ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder
 } = require('discord.js');
-const { RESOURCES, TERRAIN_MULTIPLIERS, BUILDINGS, ANCESTRIES } = require('../../data/constants');
+const { TERRAIN_MULTIPLIERS, BUILDINGS, ANCESTRIES } = require('../../data/constants');
 const {
     calcStabMultiplier, getCharBonuses, calcNobleState, formatWarningBanner,
     getPlayerRank, isVitaleFree, getNotificationChannel, calcMaintenance,
     resolveAtlasHQ, GREAT_HOUSES, sendToPlayer, getActivePlayers, safeReply, ephemeralReply
 } = require('../../utils/helpers');
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// FACTION SUPPLY & DEMAND EXCHANGE RATE SYSTEM
-// ═══════════════════════════════════════════════════════════════════════════════
-
 /**
  * Base exchange rates: units of recvRes received per 1 unit of giveRes at zero demand
  * and neutral relations. Rates degrade as weekly volume fills the pool, and are
  * modified by the player's standing with that faction.
+ *
+ * Design axioms
+ * ─────────────
+ * 1. ore→metallurgy rates must stay BELOW building efficiency to preserve building value:
+ *      Furnace  : 50 ore → 10 met  (0.20 met/ore)
+ *      Smeltery : 80 ore → 20 met  (0.25 met/ore; 0.375 with Caossa ancestry)
+ *    Hard cap: 0.16 met/ore (Caossa, best trade; Styx 0.12, Sciatic 0.14)
+ *
+ * 2. food→wealth rates must stay below Farm/Livestock efficiency:
+ *    Farm: same cost, same plots → gives BOTH +10⚖️ AND +100🥩/day. Trade alone ≠ substitute.
+ *
+ * 3. Within-faction no-arb: (wealth→X rate) × (X→wealth rate) < 1.0
+ *    Cross-faction arbitrage is bounded by the weekly pool system.
+ *
+ * Intrinsic value reference (⚖️ wealth-equivalents, derived from building costs/output):
+ *   🥩 food       ≈  0.10 ⚖️   (Farm: 100g / 100 food/day)
+ *   ⚒️ ore        ≈  1.50 ⚖️   (Mine: 500g / 30 ore/day vs Farm baseline)
+ *   🔩 metallurgy ≈  8.00 ⚖️   (5-ore conversion + Furnace overhead)
+ *   🍷 exotic     ≈ 50.00 ⚖️   (Workshop: 800g / 2 exotic/day)
+ *   💧 vitale     ≈ 40.00 ⚖️   (tax resource; scarcity inflates effective demand)
+ *   🔗 servus     ≈  6.00 ⚖️
  */
 const FACTION_BASE_RATES = {
+
+    // ── STYX ─────────────────────────────────────────────────────────────────
+    // "The majestic synthesis of sword and silk."
+    // Mountain strongholds → ore & metallurgy surplus.
+    // Silk Road access     → exotic surplus; best exotic sell-rate in game.
+    // Vast legions         → strong food & servus demand.
+    // Sole vitale broker   → only faction that accepts exotics/metallurgy for vitale.
     styx: {
-        wealth:     { vitale: 0.020, metallurgy: 0.15, ores: 2.5  },
-        ores:       { metallurgy: 0.50, wealth: 2.0               },
-        metallurgy: { vitale: 0.10,  wealth: 20.0                 },
-        food:       { wealth: 0.40,  ores: 0.8                    },
-        exotics:    { vitale: 0.20,  wealth: 40.0                 },
-        servus:     { wealth: 2.5,   ores: 4.0                    },
+        wealth: {
+            vitale:     0.025,  //  40.0 ⚖️ → 1 💧  (fair; no other faction brokers vitale)
+            metallurgy: 0.13,   //   7.7 ⚖️ → 1 🔩  (armory surplus; second-cheapest met)
+            ores:       0.65,   //   1.5 ⚖️ → 1 ⚒️  (mountain surplus; cheapest ore buy)
+            exotics:    0.022,  //  45.0 ⚖️ → 1 🍷  (silk-trade surplus)
+            food:       8.0,    //   0.13⚖️ → 1 🥩  (military supply stores, moderate access)
+        },
+        ores: {
+            metallurgy: 0.12,   //  8.3 ⚒️ → 1 🔩  (BELOW Furnace 0.20 — trade ≠ building substitute)
+            wealth:     1.10,   //  1.1 ⚖️ per ore — Styx has own surplus; modest buy-back only
+        },
+        metallurgy: {
+            vitale:     0.18,   //  5.6 🔩 → 1 💧
+            wealth:     6.50,   //  armory surplus → pays below intrinsic (8.0)
+        },
+        food: {
+            wealth:     0.09,   //  11 🥩 → 1 ⚖️  (army premium; roughly fair)
+            ores:       0.06,   //  17 🥩 → 1 ⚒️  (soldiers trade rations for raw ore)
+        },
+        exotics: {
+            vitale:     1.15,   //   1 🍷 → 1.1 💧  (silk buys imperial access above par)
+            wealth:     45.0,   //  slight below intrinsic (50); Styx silk surplus
+        },
+        servus: {
+            wealth:     8.0,    //  best servus price in game - imperial labour demand
+            ores:       3.5,    //  empire trades mountain ore for workers
+        },
     },
+
+    // ── SCIATIC ───────────────────────────────────────────────────────────────
+    // "Navigators of the great oceanic trade routes."
+    // Coastal networks → food & servus in abundance; exotics arrive from distant ports.
+    // Shipbuilding imperative → highest ores & metallurgy purchase prices in game.
+    // Best faction for selling ore/met; best for buying food/exotics.
     sciatic: {
-        wealth:     { food: 6.0,  ores: 2.5,  vitale: 0.012       },
-        ores:       { wealth: 1.8, food: 4.0, metallurgy: 0.30    },
-        food:       { wealth: 0.25, ores: 0.6                     },
-        metallurgy: { ores: 4.0,  wealth: 12.0                    },
-        exotics:    { food: 25.0, wealth: 35.0                    },
-        servus:     { food: 8.0,  ores: 3.0                       },
+        wealth: {
+            food:       14.0,   //  0.07⚖️ → 1 🥩  (coastal abundance — cheapest food)
+            exotics:    0.024,  //  41.5⚖️ → 1 🍷  (sea-route variety)
+            servus:     0.18,   //   5.6⚖️ → 1 🔗  (port-town labour surplus)
+            ores:       0.45,   //   2.2⚖️ → 1 ⚒️  (Sciatic hoards ore; expensive to buy here)
+        },
+        ores: {
+            wealth:     2.10,   //  2.1 ⚖️ per ore — 40% premium; ships need iron
+            food:       20.0,   //  1 ⚒️ → 20 🥩  (trade raw ore for coastal provisions)
+            metallurgy: 0.14,   //  7.1 ⚒️ → 1 🔩  (BELOW Furnace; best ore→met trade rate)
+        },
+        metallurgy: {
+            wealth:     11.0,   //  best metallurgy purchase price — hull fittings & rigging
+            food:       95.0,   //  1 🔩 → 95 🥩  (metal for a coastal feast)
+            ores:       5.0,    //  1 🔩 → 5 ⚒️  back-conversion to keep raw ore supply
+        },
+        food: {
+            wealth:     0.06,   //  16.5 🥩 → 1 ⚖️  (surplus; below-fair sell rate)
+            ores:       0.04,   //   25 🥩 → 1 ⚒️  (Sciatic trades food for craved ores)
+        },
+        exotics: {
+            wealth:     50.0,   //  fair price (≈intrinsic); Sciatic moves exotics efficiently
+            food:       520.0,  //  1 🍷 → 520 🥩  (exotic rarity meets food abundance)
+        },
+        servus: {
+            food:       65.0,   //  port labour traded for abundant coastal food
+            ores:       4.5,    //  servus for the shipbuilding ore Sciatic craves
+        },
     },
+
+    // ── CAOSSA ───────────────────────────────────────────────────────────────
+    // "Masters of commerce and guild trade."
+    // Smeltery ancestry bonus (+10 met/cycle → 30 vs standard 20).
+    // Insatiable ore appetite to feed the most efficient smelteries on the continent.
+    // Best ore-purchase rate & best ore→met conversion in game (still below own Smeltery).
+    // Metallurgy surplus undersold to move volume; guild exotics prized above all.
     caossa: {
-        ores:       { metallurgy: 0.45, wealth: 1.8, exotics: 0.02 },
-        wealth:     { exotics: 0.04,    ores: 3.5,  metallurgy: 0.20 },
-        metallurgy: { exotics: 0.25,    wealth: 18.0, ores: 6.0   },
-        food:       { ores: 1.2,  wealth: 0.6                      },
-        servus:     { ores: 6.0,  metallurgy: 1.5, wealth: 4.0    },
-        exotics:    { metallurgy: 3.0, ores: 25.0, wealth: 60.0   },
+        wealth: {
+            metallurgy: 0.15,   //   6.7⚖️ → 1 🔩  (guild surplus — cheapest met in game)
+            exotics:    0.025,  //  40.0⚖️ → 1 🍷  (guild luxury — best exotic buy rate)
+            ores:       0.40,   //   2.5⚖️ → 1 ⚒️  (hoarding ores; buying here is expensive)
+        },
+        ores: {
+            metallurgy: 0.16,   //  6.25⚒️ → 1 🔩  (best ore→met trade; still BELOW Furnace 0.20)
+            wealth:     2.20,   //   2.2⚖️ per ore — highest purchase price; guild hunger
+            exotics:    0.030,  //   33 ⚒️ → 1 🍷  (raw ore for guild luxury goods)
+        },
+        metallurgy: {
+            wealth:     5.50,   //  guild surplus → undersells to move volume (lowest met sell-rate)
+            ores:       4.50,   //  1 🔩 → 4.5 ⚒️  (back-loop: refined metal traded for raw ore)
+            exotics:    0.16,   //  6.25🔩 → 1 🍷  (refined metal for guild luxury)
+        },
+        food: {
+            wealth:     0.10,   //  10 🥩 → 1 ⚖️  (factory workers fed at fair rate)
+            ores:       0.07,   //  14 🥩 → 1 ⚒️  (food-rich players feed the foundry)
+        },
+        exotics: {
+            wealth:     60.0,   //  guild connoisseurs - best exotic sell price in game
+            metallurgy: 7.5,    //  1 🍷 → 7.5 🔩  (luxury for refined metal stockpile)
+            ores:       35.0,   //  1 🍷 → 35 ⚒️  (exotic rarity for bulk ore haul)
+        },
+        servus: {
+            wealth:     6.0,    //  fair guild rate (≈intrinsic)
+            metallurgy: 0.85,   //  1 🔗 → 0.85🔩  (labour for refined metal)
+            ores:       5.0,    //  1 🔗 → 5 ⚒️   (foundry's preferred servus trade)
+        },
     },
 };
 
@@ -85,27 +188,28 @@ const RESOURCE_LABELS = {
     exotics:    '🍷 Exotics',  servus:     '🔗 Servus',
 };
 const FACTION_DISPLAY_NAMES = { styx: 'Styx Empire', sciatic: 'Sciatic League', caossa: 'Caossa' };
-const FACTION_DB_NAMES       = { styx: 'Tyrannite',   sciatic: 'Sciatic League', caossa: 'Caossa' };
+const FACTION_DB_NAMES      = { styx: 'Tyrannite',   sciatic: 'Sciatic League', caossa: 'Caossa' };
 
 // ── Rate query (for preview / display) ────────────────────────────────────────
-/**
- * Returns the *marginal* rate at the current demand level (i.e. the rate the very
- * next unit of giveRes would get). Useful for display and for the scheduler to
- * show per-tick estimates. Also returns full context for building embeds.
- *
- * @param {object} db
- * @param {string} faction     styx | sciatic | caossa
- * @param {string} giveRes
- * @param {string} recvRes
- * @param {number} relScore    player's current relation score with this faction
- */
 async function getFactionExchangeRate(db, faction, giveRes, recvRes, relScore = 0) {
     const baseRate = FACTION_BASE_RATES[faction]?.[giveRes]?.[recvRes];
     if (!baseRate) return null;
 
-    const pool        = FACTION_WEEKLY_POOLS[faction]      || 5000;
+    // ── Pool size ──────────────────────────────────────────────────────────────
+    // Vitale pool is dynamic (player-count-scaled); everything else uses the
+    // static weekly pool table.
+    let pool = 0;
+    if (recvRes === 'vitale') {
+        const playerCount   = (await db.get('SELECT COUNT(*) as cnt FROM users WHERE status = "active"'))?.cnt || 1;
+        const vitaleBaseRow = await db.get("SELECT value FROM global_settings WHERE key = 'vitale_base'");
+        const vitaleBase    = parseInt(vitaleBaseRow?.value) || 15;
+        pool = vitaleBase + (10 * playerCount);
+    } else {
+        pool = FACTION_WEEKLY_POOLS[faction] || 5000;
+    }
+
     const sensitivity = FACTION_DEMAND_SENSITIVITY[faction] || 3.0;
-    const demandKey   = `demand_${faction}_${giveRes}_${recvRes}`;
+    const demandKey   = `demand_${faction}_${recvRes}`;
 
     const demandRow    = await db.get('SELECT value FROM global_settings WHERE key=?', demandKey);
     const weeklyVolume = parseInt(demandRow?.value || 0);
@@ -114,25 +218,11 @@ async function getFactionExchangeRate(db, faction, giveRes, recvRes, relScore = 
     const demandRatio  = weeklyVolume / Math.max(1, pool);
     const marginalRate = (baseRate * relMult) / (1 + demandRatio * sensitivity);
 
-    return { baseRate, marginalRate, weeklyVolume, pool, demandRatio, demandKey, relMult, relScore };
+    return { baseRate, marginalRate, weeklyVolume, pool, demandRatio, demandKey,
+             relMult, relScore, faction, sensitivity };
 }
 
 // ── Integral-based execution (for actual trades & scheduled route ticks) ───────
-/**
- * Calculates receive amount using the exact area under the demand curve, then
- * atomically updates the weekly demand counter.
- *
- * The curve is:  rate(v) = baseRate·relMult / (1 + v·S/P)
- * Integral from v₀ to v₀+A  =  baseRate·relMult·(P/S)·ln[(P+(v₀+A)·S) / (P+v₀·S)]
- *
- * Volume that exceeds the pool (supply exhausted) receives a floor rate of 5%
- * of base·relMult, preventing free unlimited trades but not hard-blocking them.
- *
- * A hard per-transaction cap of 3× the pool is enforced. Players wanting more
- * should split trades across multiple ticks (i.e. use routes).
- *
- * @returns {{ recvAmount: number, breakdown: object }}
- */
 async function executeFactionTrade(db, faction, giveRes, recvRes, giveAmt, relScore = 0) {
     const baseRate = FACTION_BASE_RATES[faction]?.[giveRes]?.[recvRes];
     if (!baseRate) {
@@ -143,7 +233,7 @@ async function executeFactionTrade(db, faction, giveRes, recvRes, giveAmt, relSc
 
     const pool        = FACTION_WEEKLY_POOLS[faction]      || 5000;
     const sensitivity = FACTION_DEMAND_SENSITIVITY[faction] || 3.0;
-    const demandKey   = `demand_${faction}_${giveRes}_${recvRes}`;
+    const demandKey   = `demand_${faction}_${recvRes}`;
 
     const demandRow  = await db.get('SELECT value FROM global_settings WHERE key=?', demandKey);
     const currentVol = parseInt(demandRow?.value || 0);
@@ -151,7 +241,7 @@ async function executeFactionTrade(db, faction, giveRes, recvRes, giveAmt, relSc
     // Hard cap: single transaction cannot exceed 3× weekly pool
     const maxTrade = pool * 3;
     if (giveAmt > maxTrade) {
-        const err = new Error(`Single transaction exceeds the market cap of ${maxTrade.toLocaleString("en-US")}.`);
+        const err = new Error(`Single transaction exceeds the market cap of ${maxTrade.toLocaleString('en-US')}.`);
         err.code  = 'TRADE_TOO_LARGE';
         err.max   = maxTrade;
         throw err;
@@ -248,13 +338,13 @@ function buildRatePreviewLines(rateInfo, giveLabel, recvLabel) {
         let   approx = 0;
         if (within > 0) approx += baseRate * relMult * (P / S) * Math.log((P + (v0 + within) * S) / Math.max(1e-9, P + v0 * S));
         if (ovflow > 0) approx += ovflow * baseRate * relMult * 0.05;
-        return `  ${n.toLocaleString("en-US")} ${giveLabel} → **${Math.floor(approx).toLocaleString("en-US")} ${recvLabel}**`;
+        return `  ${n.toLocaleString('en-US')} ${giveLabel} → **${Math.floor(approx).toLocaleString('en-US')} ${recvLabel}**`;
     });
     return [
         `**Relation standing:** ${relScoreLabel(relScore)} (rate modifier: ${relSign})`,
         `**Demand penalty:** −${demPct}% below base`,
         `**Weekly supply:** ${buildDemandBar(demandRatio)}`,
-        `Used: ${weeklyVolume.toLocaleString("en-US")} / ${pool.toLocaleString("en-US")} (resets Monday)`,
+        `Used: ${weeklyVolume.toLocaleString('en-US')} / ${pool.toLocaleString('en-US')} (resets Monday)`,
         '',
         `**Rate estimate at current supply:**`,
         ...examples,
@@ -262,10 +352,6 @@ function buildRatePreviewLines(rateInfo, giveLabel, recvLabel) {
         `*Large trades consume supply progressively — the first units trade better than the last.*`,
     ];
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// MAIN COMMAND HANDLERS (unchanged from previous version)
-// ═══════════════════════════════════════════════════════════════════════════════
 
 async function handleTax(interaction) {
     const db = interaction.client.db;
@@ -406,27 +492,27 @@ async function handleTax(interaction) {
 
     const econDesc = [
         `**Taxes Collected:** +100 🪙`,
-        `**Polity Wealth:** +${finalWealth.toLocaleString("en-US")} ⚖️`,
+        `**Polity Wealth:** +${finalWealth.toLocaleString('en-US')} ⚖️`,
         ``,
         `**Resources Generated:**`,
-        `🥩 Food: ${finalFoodNet >= 0 ? '+' : ''}${finalFoodNet.toLocaleString("en-US")}`,
-        `⚒️ Ores: ${finalOres >= 0 ? '+' : ''}${finalOres.toLocaleString("en-US")}${finalOres < 0 ? ' ⚠️ Furnace consuming more than mines produce!' : ''}`,
-        finalMet     > 0 ? `🔩 Metallurgy: +${finalMet.toLocaleString("en-US")}` : null,
-        finalExotics > 0 ? `🍷 Exotics: +${finalExotics.toLocaleString("en-US")}` : null,
+        `🥩 Food: ${finalFoodNet >= 0 ? '+' : ''}${finalFoodNet.toLocaleString('en-US')}`,
+        `⚒️ Ores: ${finalOres >= 0 ? '+' : ''}${finalOres.toLocaleString('en-US')}${finalOres < 0 ? ' ⚠️ Furnace consuming more than mines produce!' : ''}`,
+        finalMet     > 0 ? `🔩 Metallurgy: +${finalMet.toLocaleString('en-US')}` : null,
+        finalExotics > 0 ? `🍷 Exotics: +${finalExotics.toLocaleString('en-US')}` : null,
         ``,
         `*Multipliers: Stability(×${stabMult.toFixed(2)}) · Servus(×${servusMult.toFixed(2)}) · INT(×${charBonuses.wealthBonus.toFixed(2)}) · WIS(×${charBonuses.foodBonus.toFixed(2)})*`,
-        `Army upkeep: ${armyMaint.toLocaleString("en-US")} 🥩/day (charged by daily scheduler)`,
+        `Army upkeep: ${armyMaint.toLocaleString('en-US')} 🥩/day (charged by daily scheduler)`,
         servusWarn || null,
         warnBanner  || null,
     ].filter(Boolean).join('\n');
 
     const popDesc = [
         `**Rank:** ${rank} | **House:** ${houseStr}`,
-        `**Commoners:** ${user.pop_commoners.toLocaleString("en-US") || 0}`,
-        `⚒️ Militia ${user.mil_militia?.toLocaleString("en-US") || 0} | ⚔️ Infantry: ${user.mil_infantry?.toLocaleString("en-US") || 0} | 🐎 Cavalry: ${user.mil_cavalry?.toLocaleString("en-US") || 0} | 🏹 Ranged: ${user.mil_ranged?.toLocaleString("en-US") || 0} | 🪨 Siege: ${user.mil_siege?.toLocaleString("en-US") || 0}`,
+        `**Commoners:** ${user.pop_commoners.toLocaleString('en-US') || 0}`,
+        `⚒️ Militia ${user.mil_militia?.toLocaleString('en-US') || 0} | ⚔️ Infantry: ${user.mil_infantry?.toLocaleString('en-US') || 0} | 🐎 Cavalry: ${user.mil_cavalry?.toLocaleString('en-US') || 0} | 🏹 Ranged: ${user.mil_ranged?.toLocaleString('en-US') || 0} | 🪨 Siege: ${user.mil_siege?.toLocaleString('en-US') || 0}`,
         `**Nobles:** ${vitaleText}`,
-        `**Servus drain:** ${stabDrain > 0 ? `−${stabDrain.toLocaleString("en-US")} Stability` : 'None'}`,
-        `**Stability:** ${updatedUser.rate_stab.toLocaleString("en-US")}/10 | **Prestige:** ${updatedUser.rate_prest.toLocaleString("en-US")}/10`,
+        `**Servus drain:** ${stabDrain > 0 ? `−${stabDrain.toLocaleString('en-US')} Stability` : 'None'}`,
+        `**Stability:** ${updatedUser.rate_stab.toLocaleString('en-US')}/10 | **Prestige:** ${updatedUser.rate_prest.toLocaleString('en-US')}/10`,
         warnBanner || null,
     ].filter(Boolean).join('\n');
 
@@ -459,27 +545,27 @@ async function handlePopulation(interaction) {
     const hasEnoughVitale = isSubsidized || (user.vitale ?? 0) >= vitaleNeeded;
     let vitaleStr;
     if (isSubsidized || rank !== 'SOVEREIGN' || isVitaleFree(user.ancestry)) {
-        vitaleStr = nobles > 0 ? `${nobles} (${vitaleNeeded.toLocaleString("en-US")} 💧 subsidized)` : `None (pop below 200)`;
+        vitaleStr = nobles > 0 ? `${nobles} (${vitaleNeeded.toLocaleString('en-US')} 💧 subsidized)` : `None (pop below 200)`;
     } else if (inGracePeriod) {
-        vitaleStr = `${nobles} (${vitaleNeeded.toLocaleString("en-US")} 💧 grace)`;
+        vitaleStr = `${nobles} (${vitaleNeeded.toLocaleString('en-US')} 💧 grace)`;
     } else if (!hasEnoughVitale) {
-        vitaleStr = `${nobles} (${vitaleNeeded.toLocaleString("en-US")} 💧 ⚠️ DEFICIT)`;
+        vitaleStr = `${nobles} (${vitaleNeeded.toLocaleString('en-US')} 💧 ⚠️ DEFICIT)`;
     } else {
-        vitaleStr = `${nobles} (${vitaleNeeded.toLocaleString("en-US")} 💧 ✅)`;
+        vitaleStr = `${nobles} (${vitaleNeeded.toLocaleString('en-US')} 💧 ✅)`;
     }
 
     const servusWarn = (user.servus || 0) > 0 && (user.rate_stab ?? 0) - stabDrain <= -3 ? ` ⚠️ Rebellion risk` : '';
     const warnBanner = formatWarningBanner(user.rate_stab, user.rate_prest);
     const desc = [
         `**Rank:** ${rank} | **House:** ${houseStr}`,
-        `**Commoners:** ${commoners.toLocaleString("en-US")}`,
-        `⚒️ Mil ${user.mil_militia?.toLocaleString("en-US") || 0} | ⚔️ Inf: ${user.mil_infantry?.toLocaleString("en-US") || 0} | 🐎 Cav: ${user.mil_cavalry?.toLocaleString("en-US") || 0} | 🏹 Rng: ${user.mil_ranged?.toLocaleString("en-US") || 0} | 🪨 Sie: ${user.mil_siege?.toLocaleString("en-US") || 0}`,
-        (user.mercs_temp || 0) > 0 ? `🗡️ Mercs: ${user.mercs_temp.toLocaleString("en-US")} *(disband at turn end)*` : null,
-        `Army upkeep: ${armyMaint.toLocaleString("en-US")} 🥩/day`,
+        `**Commoners:** ${commoners.toLocaleString('en-US')}`,
+        `⚒️ Mil ${user.mil_militia?.toLocaleString('en-US') || 0} | ⚔️ Inf: ${user.mil_infantry?.toLocaleString('en-US') || 0} | 🐎 Cav: ${user.mil_cavalry?.toLocaleString('en-US') || 0} | 🏹 Rng: ${user.mil_ranged?.toLocaleString('en-US') || 0} | 🪨 Sie: ${user.mil_siege?.toLocaleString('en-US') || 0}`,
+        (user.mercs_temp || 0) > 0 ? `🗡️ Mercs: ${user.mercs_temp.toLocaleString('en-US')} *(disband at turn end)*` : null,
+        `Army upkeep: ${armyMaint.toLocaleString('en-US')} 🥩/day`,
         ``,
         `Food: ${famineActive ? '🔴 FAMINE — −1%/day!' : '✅'}`,
         `Nobles: ${vitaleStr}`,
-        `Servus: ${user.servus || 0}${servusWarn}${stabDrain > 0 ? ` (−${stabDrain.toLocaleString("en-US")} Stab)` : ''}`,
+        `Servus: ${user.servus || 0}${servusWarn}${stabDrain > 0 ? ` (−${stabDrain.toLocaleString('en-US')} Stab)` : ''}`,
         warnBanner ? `\n${warnBanner}` : null,
     ].filter(Boolean).join('\n');
 
@@ -504,15 +590,15 @@ async function handleBalance(interaction) {
 
     const embed = new EmbedBuilder().setTitle('💰 TREASURY').setColor(0xFFD700)
         .setDescription([
-            `🪙 Balance: ${user.balance?.toLocaleString("en-US") || 0}  |  ⚖️ Wealth: ${user.wealth?.toLocaleString("en-US") || 0}`,
+            `🪙 Balance: ${user.balance?.toLocaleString('en-US') || 0}  |  ⚖️ Wealth: ${user.wealth?.toLocaleString('en-US') || 0}`,
             ``,
-            `🥩 Food: ${user.food?.toLocaleString("en-US") || 0}  |  ⚒️ Ores: ${user.ores?.toLocaleString("en-US") || 0}`,
-            `🔩 Metallurgy: ${user.metallurgy?.toLocaleString("en-US") || 0}  |  💧 Vitale: ${user.vitale?.toLocaleString("en-US") || 0}`,
-            `🍷 Exotics: ${user.exotics?.toLocaleString("en-US") || 0}`,
+            `🥩 Food: ${user.food?.toLocaleString('en-US') || 0}  |  ⚒️ Ores: ${user.ores?.toLocaleString('en-US') || 0}`,
+            `🔩 Metallurgy: ${user.metallurgy?.toLocaleString('en-US') || 0}  |  💧 Vitale: ${user.vitale?.toLocaleString('en-US') || 0}`,
+            `🍷 Exotics: ${user.exotics?.toLocaleString('en-US') || 0}`,
             servusLine,
             ``,
-            `⚒️ Mil ${user.mil_militia?.toLocaleString("en-US") || 0}  ⚔️ Inf: ${user.mil_infantry?.toLocaleString("en-US") || 0}  🐎 Cav: ${user.mil_cavalry?.toLocaleString("en-US") || 0}  🏹 Rng: ${user.mil_ranged?.toLocaleString("en-US") || 0}  🪨 Sie: ${user.mil_siege?.toLocaleString("en-US") || 0}`,
-            `🗡️ Mercs: ${user.mercs_temp?.toLocaleString("en-US") || 0}  |  Upkeep: ${armyMaint?.toLocaleString("en-US")} 🥩/day`,
+            `⚒️ Mil ${user.mil_militia?.toLocaleString('en-US') || 0}  ⚔️ Inf: ${user.mil_infantry?.toLocaleString('en-US') || 0}  🐎 Cav: ${user.mil_cavalry?.toLocaleString('en-US') || 0}  🏹 Rng: ${user.mil_ranged?.toLocaleString('en-US') || 0}  🪨 Sie: ${user.mil_siege?.toLocaleString('en-US') || 0}`,
+            `🗡️ Mercs: ${user.mercs_temp?.toLocaleString('en-US') || 0}  |  Upkeep: ${armyMaint?.toLocaleString('en-US')} 🥩/day`,
         ].join('\n'));
     return interaction.editReply({ embeds: [embed] });
 }
@@ -541,7 +627,7 @@ async function handleGift(interaction) {
     if ((user[res] || 0) < amount) return interaction.editReply({ content: `⚠️ Insufficient ${res}. You have **${user[res] || 0}**.` });
     await db.run(`UPDATE users SET ${res} = ${res} - ? WHERE id = ?`, amount, interaction.user.id);
     await db.run(`UPDATE users SET ${res} = COALESCE(${res}, 0) + ? WHERE id = ?`, amount, targetId);
-    return interaction.editReply({ content: `🎁 Gifted **${amount.toLocaleString("en-US")} ${res.toUpperCase()}** to <@${targetId}>.` });
+    return interaction.editReply({ content: `🎁 Gifted **${amount.toLocaleString('en-US')} ${res.toUpperCase()}** to <@${targetId}>.` });
 }
 
 async function handleTrade(interaction) {
@@ -552,7 +638,7 @@ async function handleTrade(interaction) {
     const routeList = routes.length > 0
         ? routes.map(r => {
             const dur = r.turns_remaining !== null ? `${r.turns_remaining} turns left` : `indefinite`;
-            return `**#${r.id}**: ${r.give_amount.toLocaleString("en-US")} ${r.give_resource} → ${r.partner_type === 'player' ? `<@${r.partner_id}>` : (FACTION_DISPLAY_NAMES[r.partner_type] || r.partner_type)} | ${dur}`;
+            return `**#${r.id}**: ${r.give_amount.toLocaleString('en-US')} ${r.give_resource} → ${r.partner_type === 'player' ? `<@${r.partner_id}>` : (FACTION_DISPLAY_NAMES[r.partner_type] || r.partner_type)} | ${dur}`;
         }).join('\n')
         : 'No active trade routes.';
 
@@ -578,7 +664,7 @@ async function handleTrade(interaction) {
         .setCustomId(`trade_route_${userId}`)
         .setPlaceholder('2️⃣ Trade Routes — manage...')
         .addOptions([
-            { label: 'View My Routes',       value: 'list',      description: 'Show all active trade routes' },
+            { label: 'View My Routes',        value: 'list',      description: 'Show all active trade routes' },
             { label: 'New Route (Faction)',   value: 'new',       description: 'Recurring route with Styx/Sciatic/Caossa' },
             { label: 'New Route (Player)',    value: 'newplayer', description: 'Recurring route with another player' },
         ]);
@@ -607,17 +693,23 @@ async function handleEmpire(interaction) {
 }
 
 async function renderEmpireEmbed(db) {
-    const settings    = await db.all('SELECT * FROM global_settings');
-    const getS        = (k) => settings.find(s => s.key === k)?.value;
-    const playerCount = (await db.get('SELECT COUNT(*) as cnt FROM users WHERE status = ?', 'active'))?.cnt || 1;
-    const vitaleBase  = parseInt(getS('vitale_base')) || 15;
-    const vitaleSold  = parseInt(getS('vitale_sold_week')) || 0;
-    const vitalePool  = vitaleBase + (10 * playerCount);
-    const demandRatio = vitaleSold / Math.max(1, vitalePool);
-    const vitalePrice = Math.floor(50 * (1 + demandRatio * 4));
+    // vitalePool, vitaleSold, demandRatio derived below via getFactionExchangeRate
 
-    const STYX_HOUSES = ['TYRANNITE', 'RHAGAIA', 'SELLESELA', 'GAIUS', 'CAOSSA'];
-    const styxPlayers = await db.all("SELECT id, mil_militia, mil_spearmen, mil_swordsman, mil_shield, mil_cavalry, mil_ranged, mil_siege, nation, ruler_name, username FROM users WHERE status='active'");
+    // Use the shared S&D function so the display is always consistent with what
+    // executeFactionTrade would charge. relScore=0 → neutral display price.
+    const rateInfo     = await getFactionExchangeRate(db, 'styx', 'wealth', 'vitale', 0);
+    const vitalePool   = rateInfo.pool;
+    const vitaleSold   = rateInfo.weeklyVolume;
+    const demandRatio  = rateInfo.demandRatio;
+    // ceil: displayed price is always ≥ 1 ⚖️ and never under-charges
+    const vitalePrice  = Math.ceil(1 / rateInfo.marginalRate);
+    const basePriceStr = Math.ceil(1 / rateInfo.baseRate).toLocaleString('en-US'); // "40" at zero demand
+
+    // Vassal census
+    const STYX_HOUSES  = ['TYRANNITE', 'RHAGAIA', 'SELLESELA', 'GAIUS', 'CAOSSA'];
+    const styxPlayers  = await db.all(
+        "SELECT id, mil_militia, mil_spearmen, mil_swordsman, mil_shield, mil_cavalry, mil_ranged, mil_siege, nation, ruler_name, username FROM users WHERE status='active'"
+    );
     const { ANCESTRIES } = require('../../data/constants');
     let vassalCount = 0, totalStyxMil = 0;
     const vassalNames = [];
@@ -626,30 +718,33 @@ async function renderEmpireEmbed(db) {
         const house  = ANCESTRIES[(ancRow?.ancestry || '').toUpperCase()]?.house;
         if (house && STYX_HOUSES.includes(house)) {
             vassalCount++;
-            totalStyxMil += (p.mil_militia||0)+(p.mil_spearmen||0)+(p.mil_swordsman||0)+(p.mil_shield||0)+(p.mil_cavalry||0)+(p.mil_ranged||0)+(p.mil_siege||0);
+            totalStyxMil += (p.mil_militia||0)+(p.mil_spearmen||0)+(p.mil_swordsman||0)+
+                            (p.mil_shield||0)+(p.mil_cavalry||0)+(p.mil_ranged||0)+(p.mil_siege||0);
             const name = p.ruler_name || p.username || 'Unknown';
             vassalNames.push(p.nation ? `${name} of ${p.nation}` : name);
         }
     }
-    const vassalStr = vassalCount > 0 ? `${vassalCount} vassal(s) | ⚔️ ${totalStyxMil} total military` : 'No vassals sworn';
+    const vassalStr = vassalCount > 0
+        ? `${vassalCount} vassal(s) | ⚔️ ${totalStyxMil.toLocaleString('en-US')} total military`
+        : 'No vassals sworn';
 
-    return new EmbedBuilder().setTitle('🏛️ STYX EMPIRE DASHBOARD').setColor(0x6A0DAD)
+    return new EmbedBuilder()
+        .setTitle('🏛️ STYX EMPIRE DASHBOARD')
+        .setColor(0x6A0DAD)
         .setDescription([
             `**Vitale Market**`,
-            `Pool: ${vitalePool} 💧 | Sold: ${vitaleSold} 💧`,
-            `Current Price: **${vitalePrice} ⚖️** per unit`,
+            `Pool: ${vitalePool} 💧 | Sold this week: ${vitaleSold.toLocaleString('en-US')} 💧`,
+            `Demand: ${buildDemandBar(demandRatio)}`,
+            `Current price: **${vitalePrice.toLocaleString('en-US')} ⚖️** per unit`,
+            `*(base price at zero demand: ${basePriceStr} ⚖️ — rises as supply is consumed)*`,
             ``,
             `**Styx Empire Status**`,
             `${vassalStr}`,
-            vassalNames.length > 0 ? `Nations: ${vassalNames.join(', ')}` : '',
+            vassalNames.length > 0 ? `Nations: ${vassalNames.join(', ')}` : null,
             ``,
-            `*Price rises with weekly demand. Market resets each Monday.*`,
-        ].join('\n'));
+            `*Market resets each Monday. Route trades are priced via the integral S&D model.*`,
+        ].filter(Boolean).join('\n'));
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// BUTTON HANDLER
-// ═══════════════════════════════════════════════════════════════════════════════
 
 async function handleButton(interaction, action, args) {
     const db = interaction.client.db;
@@ -672,19 +767,31 @@ async function handleButton(interaction, action, args) {
         return interaction.showModal(modal);
     }
 
+    // ── Vitale buy: show integral-priced modal ─────────────────────────────────
+    // Player enters how much WEALTH to spend; they receive vitale calculated via
+    // executeFactionTrade (wealth→vitale, Styx, integral S&D model).
     if (action === 'vitale' && args[0] === 'buy') {
         const rel = await db.get('SELECT score FROM relations WHERE user_id=? AND faction_name=?', interaction.user.id, 'Tyrannite');
         if (rel && rel.score <= -20) return ephemeralReply(interaction, '🚫 Embargoed by Styx Empire.');
-        const settings = await db.all('SELECT * FROM global_settings');
-        const getS     = k => settings.find(s => s.key === k)?.value;
-        const pCount   = (await db.get('SELECT COUNT(*) as cnt FROM users WHERE status=?', 'active'))?.cnt || 1;
-        const vBase    = parseInt(getS('vitale_base')) || 15;
-        const vSold    = parseInt(getS('vitale_sold_week')) || 0;
-        const pool     = vBase + (10 * pCount);
-        const price    = Math.floor(50 * (1 + (vSold / Math.max(1, pool)) * 4));
-        const modal    = new ModalBuilder().setCustomId(`vitale_modal_${price}`).setTitle(`💧 Buy Vitale — ${price}⚖️ each`);
+        const relScore = rel?.score ?? 0;
+
+        // Live rate so the modal label always reflects current supply
+        const rateInfo    = await getFactionExchangeRate(db, 'styx', 'wealth', 'vitale', relScore);
+        const approxPrice = Math.ceil(1 / rateInfo.marginalRate); // ⚖️ per 💧 at current margin
+        const supplyPct   = Math.round(rateInfo.demandRatio * 100);
+        const supplyNote  = rateInfo.demandRatio >= 0.8 ? '🔴 HIGH demand' :
+                            rateInfo.demandRatio >= 0.5 ? '🟡 MODERATE demand' : '🟢 Fresh supply';
+
+        const modal = new ModalBuilder()
+            .setCustomId(`vitale_wealthmod_${relScore}`)
+            .setTitle(`💧 Buy Vitale — ~${approxPrice}⚖️/unit`);
         modal.addComponents(new ActionRowBuilder().addComponents(
-            new TextInputBuilder().setCustomId('amount').setLabel(`Price: ${price} ⚖️/unit`).setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('How many?')
+            new TextInputBuilder()
+                .setCustomId('wealth_amt')
+                .setLabel(`Wealth to spend  (${supplyNote}, ${supplyPct}% used)`)
+                .setStyle(TextInputStyle.Short)
+                .setRequired(true)
+                .setPlaceholder(`e.g. ${approxPrice * 10} → ~10 vitale`)
         ));
         return interaction.showModal(modal);
     }
@@ -711,8 +818,8 @@ async function handleButton(interaction, action, args) {
         await db.run(`UPDATE users SET ${trade.recv_resource}=${trade.recv_resource}-?, ${trade.give_resource}=COALESCE(${trade.give_resource},0)+? WHERE id=?`, trade.recv_amount, trade.give_amount, trade.partner_id);
         await db.run("UPDATE pending_trades SET status='completed' WHERE id=?", tradeId);
 
-        await interaction.update({ content: `✅ Trade accepted! You gave **${trade.recv_amount.toLocaleString("en-US")} ${RESOURCE_LABELS[trade.recv_resource] || trade.recv_resource}** and received **${trade.give_amount.toLocaleString("en-US")} ${RESOURCE_LABELS[trade.give_resource] || trade.give_resource}**.`, embeds: [], components: [] });
-        const confirmMsg = { content: `✅ <@${trade.partner_id}> accepted your trade! You gave **${trade.give_amount.toLocaleString("en-US")} ${RESOURCE_LABELS[trade.give_resource] || trade.give_resource}**, received **${trade.recv_amount.toLocaleString("en-US")} ${RESOURCE_LABELS[trade.recv_resource] || trade.recv_resource}**.` };
+        await interaction.update({ content: `✅ Trade accepted! You gave **${trade.recv_amount.toLocaleString('en-US')} ${RESOURCE_LABELS[trade.recv_resource] || trade.recv_resource}** and received **${trade.give_amount.toLocaleString('en-US')} ${RESOURCE_LABELS[trade.give_resource] || trade.give_resource}**.`, embeds: [], components: [] });
+        const confirmMsg = { content: `✅ <@${trade.partner_id}> accepted your trade! You gave **${trade.give_amount.toLocaleString('en-US')} ${RESOURCE_LABELS[trade.give_resource] || trade.give_resource}**, received **${trade.recv_amount.toLocaleString('en-US')} ${RESOURCE_LABELS[trade.recv_resource] || trade.recv_resource}**.` };
         try { await (await (await interaction.client.users.fetch(trade.initiator_id)).createDM()).send(confirmMsg); }
         catch (_) { await sendToPlayer(interaction.client, interaction, trade.initiator_id, confirmMsg); }
         return;
@@ -780,7 +887,7 @@ async function handleModal(interaction, action, args) {
         const partner = await db.get("SELECT * FROM users WHERE id=? AND status='active'", partnerId);
         if (!partner) return ephemeralReply(interaction, '⚠️ Partner not found or inactive.');
         if ((user[giveRes] || 0) < giveAmt)
-            return ephemeralReply(interaction, `⚠️ Insufficient ${RESOURCE_LABELS[giveRes] || giveRes} (you have ${(user[giveRes] || 0).toLocaleString("en-US")}).`);
+            return ephemeralReply(interaction, `⚠️ Insufficient ${RESOURCE_LABELS[giveRes] || giveRes} (you have ${(user[giveRes] || 0).toLocaleString('en-US')}).`);
 
         const result  = await db.run(
             'INSERT INTO pending_trades (initiator_id, partner_id, give_resource, give_amount, recv_resource, recv_amount, status, created_at) VALUES (?,?,?,?,?,?,?,?)',
@@ -792,8 +899,8 @@ async function handleModal(interaction, action, args) {
             .setDescription([
                 `<@${userId}> proposes a trade:`,
                 '',
-                `**They give you:** ${giveAmt.toLocaleString("en-US")} ${RESOURCE_LABELS[giveRes] || giveRes}`,
-                `**You give them:** ${recvAmt.toLocaleString("en-US")} ${RESOURCE_LABELS[recvRes] || recvRes}`,
+                `**They give you:** ${giveAmt.toLocaleString('en-US')} ${RESOURCE_LABELS[giveRes] || giveRes}`,
+                `**You give them:** ${recvAmt.toLocaleString('en-US')} ${RESOURCE_LABELS[recvRes] || recvRes}`,
                 '',
                 `*Nothing is transferred until you accept. Offer expires on bot restart.*`,
             ].join('\n'));
@@ -843,8 +950,8 @@ async function handleModal(interaction, action, args) {
             .setDescription([
                 `<@${initiatorId}> proposes a recurring route:`,
                 ``,
-                `Give: **${giveAmt.toLocaleString("en-US")} ${RESOURCE_LABELS[giveRes] || giveRes}** per turn`,
-                `Receive: **${recvAmt.toLocaleString("en-US")} ${RESOURCE_LABELS[recvRes] || recvRes}** per turn`,
+                `Give: **${giveAmt.toLocaleString('en-US')} ${RESOURCE_LABELS[giveRes] || giveRes}** per turn`,
+                `Receive: **${recvAmt.toLocaleString('en-US')} ${RESOURCE_LABELS[recvRes] || recvRes}** per turn`,
                 `Duration: **${duration} turn(s)**`,
             ].join('\n'));
         const row = new ActionRowBuilder().addComponents(
@@ -868,14 +975,14 @@ async function handleModal(interaction, action, args) {
         const [, userId, faction, giveRes, recvRes] = args;
         const giveAmt      = parseInt(interaction.fields.getTextInputValue('give_amt'));
         const durationRaw  = interaction.fields.getTextInputValue('duration')?.trim();
-        const durationTurns = durationRaw ? Math.max(1, parseInt(durationRaw) || 1) : null; // null = indefinite
+        const durationTurns = durationRaw ? Math.max(1, parseInt(durationRaw) || 1) - 1 : null; // null = indefinite
 
         if (isNaN(giveAmt) || giveAmt <= 0)
             return ephemeralReply(interaction, '⚠️ Invalid amount.');
 
         const user = await db.get('SELECT * FROM users WHERE id=?', userId);
         if ((user[giveRes] || 0) < giveAmt)
-            return ephemeralReply(interaction, `⚠️ Insufficient ${RESOURCE_LABELS[giveRes] || giveRes} — you have ${(user[giveRes] || 0).toLocaleString("en-US")}.`);
+            return ephemeralReply(interaction, `⚠️ Insufficient ${RESOURCE_LABELS[giveRes] || giveRes} — you have ${(user[giveRes] || 0).toLocaleString('en-US')}.`);
 
         // Embargo check
         const factionDbName = FACTION_DB_NAMES[faction];
@@ -893,7 +1000,7 @@ async function handleModal(interaction, action, args) {
         const pool = FACTION_WEEKLY_POOLS[faction] || 5000;
         if (giveAmt > pool * 3) {
             return ephemeralReply(interaction, [
-                `⚠️ **Transaction too large.** The per-trade cap for ${FACTION_DISPLAY_NAMES[faction] || faction} is **${(pool * 3).toLocaleString("en-US")} ${RESOURCE_LABELS[giveRes] || giveRes}**.`,
+                `⚠️ **Transaction too large.** The per-trade cap for ${FACTION_DISPLAY_NAMES[faction] || faction} is **${(pool * 3).toLocaleString('en-US')} ${RESOURCE_LABELS[giveRes] || giveRes}**.`,
                 `Split it across multiple turns — that's what trade routes are for.`,
             ].join('\n'));
         }
@@ -909,12 +1016,12 @@ async function handleModal(interaction, action, args) {
             ({ recvAmount, breakdown } = await executeFactionTrade(db, faction, giveRes, recvRes, giveAmt, relScore));
         } catch (err) {
             if (err.code === 'TRADE_TOO_LARGE')
-                return ephemeralReply(interaction, `⚠️ Single-turn cap is **${err.max.toLocaleString("en-US")}** for this faction. Try a smaller per-turn amount.`);
+                return ephemeralReply(interaction, `⚠️ Single-turn cap is **${err.max.toLocaleString('en-US')}** for this faction. Try a smaller per-turn amount.`);
             return ephemeralReply(interaction, `⚠️ Trade failed: ${err.message}`);
         }
 
         if (recvAmount <= 0)
-            return ephemeralReply(interaction, `⚠️ Market saturated — giving ${giveAmt.toLocaleString("en-US")} ${RESOURCE_LABELS[giveRes] || giveRes} yields < 1 ${RESOURCE_LABELS[recvRes] || recvRes} this week. Wait for the Monday reset.`);
+            return ephemeralReply(interaction, `⚠️ Market saturated — giving ${giveAmt.toLocaleString('en-US')} ${RESOURCE_LABELS[giveRes] || giveRes} yields < 1 ${RESOURCE_LABELS[recvRes] || recvRes} this week. Wait for the Monday reset.`);
 
         // Deduct first-tick resources immediately
         await db.run(
@@ -922,12 +1029,14 @@ async function handleModal(interaction, action, args) {
             giveAmt, recvAmount, userId
         );
 
-        // Insert standing route for subsequent ticks (receive_amount will be
-        // recalculated by the scheduler each tick; stored here as first-tick value for reference)
-        await db.run(
-            "INSERT INTO trade_routes (initiator_id, partner_id, partner_type, give_resource, give_amount, receive_resource, receive_amount, duration_turns, turns_remaining, status) VALUES (?,NULL,?,?,?,?,?,?,?,'active')",
-            userId, faction, giveRes, giveAmt, recvRes, recvAmount, durationTurns, durationTurns
-        );
+        if (durationTurns > 0) {
+            // Insert standing route for subsequent ticks (receive_amount will be
+            // recalculated by the scheduler each tick; stored here as first-tick value for reference)
+            await db.run(
+                "INSERT INTO trade_routes (initiator_id, partner_id, partner_type, give_resource, give_amount, receive_resource, receive_amount, duration_turns, turns_remaining, status) VALUES (?,NULL,?,?,?,?,?,?,?,'active')",
+                userId, faction, giveRes, giveAmt, recvRes, recvAmount, durationTurns, durationTurns
+            );
+        }
 
         // Build confirmation embed
         const avgRate   = (recvAmount / giveAmt).toFixed(4);
@@ -935,7 +1044,7 @@ async function handleModal(interaction, action, args) {
         const relSign   = breakdown.relMult >= 1 ? `+${relPct}%` : `${relPct}%`;
         const durStr    = durationTurns !== null ? `${durationTurns} turn(s)` : `indefinite (until relations drop below −10 or you cancel)`;
         const overflowNote = breakdown.overflow > 0
-            ? `\n⚠️ **${breakdown.overflow.toLocaleString("en-US")} units were traded at the floor rate** (supply pool exhausted). Smaller per-turn amounts get better rates.`
+            ? `\n⚠️ **${breakdown.overflow.toLocaleString('en-US')} units were traded at the floor rate** (supply pool exhausted). Smaller per-turn amounts get better rates.`
             : '';
 
         await interaction.deferUpdate();
@@ -945,8 +1054,8 @@ async function handleModal(interaction, action, args) {
                 .setColor(breakdown.overflow > 0 ? 0xFFCC00 : 0x00FF88)
                 .setDescription([
                     `**First tick executed immediately:**`,
-                    `  Gave: ${giveAmt.toLocaleString("en-US")} ${RESOURCE_LABELS[giveRes] || giveRes}`,
-                    `  Received: ${recvAmount.toLocaleString("en-US")} ${RESOURCE_LABELS[recvRes] || recvRes}`,
+                    `  Gave: ${giveAmt.toLocaleString('en-US')} ${RESOURCE_LABELS[giveRes] || giveRes}`,
+                    `  Received: ${recvAmount.toLocaleString('en-US')} ${RESOURCE_LABELS[recvRes] || recvRes}`,
                     `  Avg rate: ${avgRate} | Relation modifier: ${relSign}`,
                     overflowNote,
                     ``,
@@ -973,25 +1082,66 @@ async function handleModal(interaction, action, args) {
         return ephemeralReply(interaction, `✅ You will request **${amt} ${res}**.\nBoth sides set — use the trade embed to confirm or start over.`);
     }
 
-    if (action === 'vitale' && args[0] === 'modal') {
-        const vitalePrice = parseInt(args[1]);
-        const amount      = parseInt(interaction.fields.getTextInputValue('amount')?.trim());
-        if (isNaN(amount) || amount <= 0) return ephemeralReply(interaction, '⚠️ Invalid amount.');
+    // ── Vitale purchase: spend wealth, receive vitale via integral S&D ─────────
+    // customId: vitale_wealthmod_{relScore}
+    // The relScore in args[1] is a snapshot shown in the modal label for UX context only.
+    // We always re-fetch the live score before executing to prevent stale-value exploits.
+    if (action === 'vitale' && args[0] === 'wealthmod') {
+        const wealthAmt = parseInt(interaction.fields.getTextInputValue('wealth_amt')?.trim());
+        if (isNaN(wealthAmt) || wealthAmt <= 0) return ephemeralReply(interaction, '⚠️ Invalid amount.');
+
         await interaction.deferUpdate();
-        const user = await db.get('SELECT wealth, nation FROM users WHERE id = ?', interaction.user.id);
-        if (!user.nation) return interaction.editReply({ content: '⚠️ You must found a nation to trade with the Styx Empire.', embeds: [], components: [] });
-        const totalCost = vitalePrice * amount;
-        if ((user.wealth || 0) < totalCost) return interaction.editReply({ content: `⚠️ Insufficient Wealth. You need **${totalCost.toLocaleString("en-US")} ⚖️**.`, embeds: [], components: [] });
-        await db.run('UPDATE users SET wealth = wealth - ?, vitale = COALESCE(vitale, 0) + ? WHERE id = ?', totalCost, amount, interaction.user.id);
-        await db.run('UPDATE global_settings SET value = CAST(value AS INTEGER) + ? WHERE key = ?', amount, 'vitale_sold_week');
+        const userId = interaction.user.id;
+        const user   = await db.get('SELECT wealth, nation FROM users WHERE id = ?', userId);
+
+        if (!user.nation)
+            return interaction.editReply({ content: '⚠️ You must found a nation to trade with the Styx Empire.', embeds: [], components: [] });
+        if ((user.wealth || 0) < wealthAmt)
+            return interaction.editReply({ content: `⚠️ Insufficient Wealth. You need **${wealthAmt.toLocaleString('en-US')} ⚖️** but only have **${(user.wealth || 0).toLocaleString('en-US')} ⚖️**.`, embeds: [], components: [] });
+
+        // Re-fetch live relation — never trust the snapshot for pricing
+        const rel = await db.get('SELECT score FROM relations WHERE user_id=? AND faction_name=?', userId, 'Tyrannite');
+        if (rel && rel.score <= -20)
+            return interaction.editReply({ content: '🚫 **Embargoed** — your relations with the Styx Empire are Hostile. Improve standing to resume trade.', embeds: [], components: [] });
+        const relScore = rel?.score ?? 0;
+
+        let recvAmount, breakdown;
+        try {
+            ({ recvAmount, breakdown } = await executeFactionTrade(db, 'styx', 'wealth', 'vitale', wealthAmt, relScore));
+        } catch (err) {
+            if (err.code === 'TRADE_TOO_LARGE')
+                return interaction.editReply({ content: `⚠️ Single-purchase cap is **${err.max.toLocaleString('en-US')} ⚖️** for the Styx vitale market. Try a smaller amount.`, embeds: [], components: [] });
+            return interaction.editReply({ content: `⚠️ Trade failed: ${err.message}`, embeds: [], components: [] });
+        }
+
+        if (recvAmount <= 0)
+            return interaction.editReply({ content: `⚠️ Market saturated — **${wealthAmt.toLocaleString('en-US')} ⚖️** yields less than 1 💧 this week. Wait for the Monday reset or try a larger amount.`, embeds: [], components: [] });
+
+        // executeFactionTrade already updated demand_styx_vitale; just move resources
+        await db.run(
+            'UPDATE users SET wealth = wealth - ?, vitale = COALESCE(vitale, 0) + ? WHERE id = ?',
+            wealthAmt, recvAmount, userId
+        );
+
+        const avgPrice = (wealthAmt / recvAmount).toFixed(1);
+        const relPct   = ((breakdown.relMult - 1) * 100).toFixed(0);
+        const relSign  = breakdown.relMult >= 1 ? `+${relPct}%` : `${relPct}%`;
+        const overNote = breakdown.overflow > 0
+            ? `\n⚠️ **${breakdown.overflow.toLocaleString('en-US')} ⚖️ traded at floor rate** (weekly pool exhausted). Smaller purchases get better rates.`
+            : '';
+
         const emb = await renderEmpireEmbed(db);
-        return interaction.editReply({ content: `💧 **Transaction complete.** Purchased **${amount.toLocaleString("en-US")} Vitale** for **${totalCost.toLocaleString("en-US")} ⚖️**.`, embeds: [emb], components: [] });
+        return interaction.editReply({
+            content: [
+                `💧 **Transaction complete.**`,
+                `Spent **${wealthAmt.toLocaleString('en-US')} ⚖️** → received **${recvAmount.toLocaleString('en-US')} 💧 Vitale**`,
+                `Avg cost: **${avgPrice} ⚖️/unit** | Relation modifier: ${relSign}${overNote}`,
+            ].join('\n'),
+            embeds: [emb],
+            components: [],
+        });
     }
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SELECT MENU HANDLER
-// ═══════════════════════════════════════════════════════════════════════════════
 
 async function handleSelect(interaction, action, args) {
     const db = interaction.client.db;
@@ -1066,7 +1216,7 @@ async function handleSelect(interaction, action, args) {
             .setCustomId(`trade_onedonemod_${userId}_${partnerId}_${giveRes}_${recvRes}`)
             .setTitle('🤝 Trade Amounts');
         modal.addComponents(
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('give_amt').setLabel(`${RESOURCE_LABELS[giveRes] || giveRes} to give (have ${(user[giveRes] || 0).toLocaleString("en-US")})`).setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('100')),
+            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('give_amt').setLabel(`${RESOURCE_LABELS[giveRes] || giveRes} to give (have ${(user[giveRes] || 0).toLocaleString('en-US')})`).setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('100')),
             new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('recv_amt').setLabel(`${RESOURCE_LABELS[recvRes] || recvRes} to request from them`).setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('50'))
         );
         return interaction.showModal(modal);
@@ -1276,9 +1426,18 @@ async function handleSelect(interaction, action, args) {
         const demandBarStr = buildDemandBar(rateInfo.demandRatio);
 
         // Compute some example amounts so players know what to expect
+        const { baseRate, relMult, weeklyVolume: v0, pool: P, sensitivity: S } = rateInfo;
         const examples = [100, 500, 1000].map(n => {
-            const out = Math.floor(rateInfo.baseRate * rateInfo.pool / rateInfo.relMult * Math.log((1 + (rateInfo.weeklyVolume + n) * rateInfo.relMult / rateInfo.pool) / (1 + rateInfo.weeklyVolume * rateInfo.relMult / rateInfo.pool)))
-            return `  ${n.toLocaleString("en-US")} ${giveLabel} → **${out.toLocaleString("en-US")} ${recvLabel}**`;
+            const within = Math.max(0, Math.min(n, P - v0));
+            const over   = Math.max(0, n - within);
+            let recv = 0;
+            if (within > 0)
+                recv += baseRate * relMult * (P / S) *
+                        Math.log((P + (v0 + within) * S) / Math.max(1e-9, P + v0 * S));
+            if (over > 0)
+                recv += over * baseRate * relMult * 0.05;
+            const tag = over > 0 ? ` *(pool overflow — split across turns for better rates)*` : '';
+            return `  ${n.toLocaleString('en-US')} ${giveLabel} → **${Math.floor(recv).toLocaleString('en-US')} ${recvLabel}**${tag}`;
         });
 
         const degradationNote = rateInfo.demandRatio > 0
@@ -1294,7 +1453,7 @@ async function handleSelect(interaction, action, args) {
                 `**Base rate (zero demand):** ${rateInfo.baseRate.toFixed(4)}`,
                 '',
                 `**Weekly supply:** ${demandBarStr}`,
-                `Used: ${rateInfo.weeklyVolume.toLocaleString("en-US")} / ${rateInfo.pool.toLocaleString("en-US")}${degradationNote}`,
+                `Used: ${rateInfo.weeklyVolume.toLocaleString('en-US')} / ${rateInfo.pool.toLocaleString('en-US')}${degradationNote}`,
                 '',
                 `**Example trades at current rate:**`,
                 ...examples,
@@ -1314,6 +1473,8 @@ async function handleSelect(interaction, action, args) {
 module.exports = {
     handleTax, handlePopulation, handleBalance, handleDonate, handleGift,
     handleTrade, handleEmpire, handleButton, handleModal, handleSelect,
-    // Export rate utilities for use by weekly reset scheduler
-    FACTION_BASE_RATES, FACTION_WEEKLY_POOLS, getFactionExchangeRate,
+    FACTION_BASE_RATES, FACTION_WEEKLY_POOLS, FACTION_DB_NAMES,
+    getFactionExchangeRate,
+    calculateFactionRouteReturn,
+    executeFactionTrade,
 };

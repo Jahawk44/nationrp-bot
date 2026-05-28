@@ -62,7 +62,7 @@ async function handleOriginsLogic(interaction, action, args) {
                 new ButtonBuilder().setCustomId(`origins_ancestrypick_POLYSIA-RIPARIAN_${age}`).setLabel('Polysia-Riparian').setEmoji('🚣').setStyle(ButtonStyle.Primary),
                 new ButtonBuilder().setCustomId(`origins_back_intro`).setLabel('Back').setStyle(ButtonStyle.Secondary)
             );
-            try { await interaction.deferUpdate(); } catch { }
+            try { await interaction.deferUpdate(); } catch {}
             return interaction.editReply({ embeds: [embed], components: [row] });
         }
         
@@ -82,7 +82,7 @@ async function handleOriginsLogic(interaction, action, args) {
             if (currentRow.components.length > 0) rows.push(currentRow);
             const backRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`origins_back_intro`).setLabel('Back').setStyle(ButtonStyle.Secondary));
             rows.push(backRow);
-            try { await interaction.deferUpdate(); } catch { }
+            try { await interaction.deferUpdate(); } catch {}
             return interaction.editReply({ embeds: [embed], components: rows });
         }
 
@@ -105,7 +105,7 @@ async function handleOriginsLogic(interaction, action, args) {
             if (currentRow.components.length > 0) rows.push(currentRow);
             const backRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`origins_back_ancestry_${ancKey}_${age}`).setLabel('Back').setStyle(ButtonStyle.Secondary));
             rows.push(backRow);
-            try { await interaction.deferUpdate(); } catch { }
+            try { await interaction.deferUpdate(); } catch {}
             return interaction.editReply({ embeds: [embed], components: rows });
         }
 

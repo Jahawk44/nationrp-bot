@@ -213,7 +213,7 @@ async function getNotificationChannel(client, user) {
     const id = user.notification_channel || user.last_tax_channel || process.env.ADMIN_CHANNEL_ID;
     if (!id) return null;
     try { return await client.channels.fetch(id); }
-    catch (_) { return null; }
+    catch { return null; }
 }
 
 // Sends a message to a player: tries DM first, falls back to interaction channel
@@ -221,12 +221,24 @@ async function sendToPlayer(client, interaction, userId, content) {
     try {
         const u = await client.users.fetch(userId);
         if (u) { await u.send(content); return; }
-    } catch (_) {}
+    } catch {}
     try {
         if (interaction && interaction.channel) {
             await interaction.channel.send(content);
         }
-    } catch (_) {}
+    } catch {}
+}
+
+// Sends a message to a player: tries notification channel first, then DM
+async function notifyPlayer(client, user, content) {
+    try {
+        const u = await client.users.fetch(user.id);
+        if (u) { await u.send(content); return; }
+    } catch {}
+    try {
+        channel = await getNotificationChannel(client, user);
+        if (channel) { await channel.send(content); }
+    } catch {}
 }
 
 async function getActivePlayers(db, excludeId) {
@@ -397,7 +409,7 @@ async function initDB(db) {
         'CREATE TABLE IF NOT EXISTS pending_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, initiator_id TEXT, partner_id TEXT, give_resource TEXT, give_amount INTEGER, recv_resource TEXT, recv_amount INTEGER, status TEXT DEFAULT "pending", created_at INTEGER)',
     ];
     for (const sql of newTables) {
-        try { await db.run(sql); } catch (_) {}
+        try { await db.run(sql); } catch {}
     }
 
     for (const sql of migrations) {
@@ -488,7 +500,7 @@ module.exports = {
     calcStabMultiplier, getCharBonuses, calcNobleState,
     getWarningLevel, formatWarningBanner,
     getPlayerRank, isVitaleFree, getNotificationChannel,
-    sendToPlayer, getActivePlayers,
+    sendToPlayer, notifyPlayer, getActivePlayers,
     safeReply, ephemeralReply,
     calcMorale,
     calcMaintenance,

@@ -22,8 +22,8 @@ async function handleMilitary(interaction) {
             `🏰 **Siege** — Lay siege to a settlement (Sovereign)`,
             `🗡️ **Raid** — Hit-and-run raid (Dominar+)`,
             '',
-            `Your army: ⚒️ Mil ${user.mil_militia?.toLocaleString("en-US") || 0} | ⚔️ Inf ${user.mil_infantry?.toLocaleString("en-US") || 0} | 🐎 Cav ${user.mil_cavalry?.toLocaleString("en-US") || 0} | 🏹 Rng ${user.mil_ranged?.toLocaleString("en-US") || 0} | 🪨 Sie ${user.mil_siege?.toLocaleString("en-US") || 0} | 🗡️ Merc ${user.mercs_temp?.toLocaleString("en-US") || 0}`,
-            `Food: ${user.food.toLocaleString("en-US") || 0} 🥩 | Morale: ${calcMorale(user).toLocaleString("en-US")}`,
+            `Your army: ⚒️ Mil ${user.mil_militia?.toLocaleString('en-US') || 0} | ⚔️ Inf ${user.mil_infantry?.toLocaleString('en-US') || 0} | 🐎 Cav ${user.mil_cavalry?.toLocaleString('en-US') || 0} | 🏹 Rng ${user.mil_ranged?.toLocaleString('en-US') || 0} | 🪨 Sie ${user.mil_siege?.toLocaleString('en-US') || 0} | 🗡️ Merc ${user.mercs_temp?.toLocaleString('en-US') || 0}`,
+            `Food: ${user.food.toLocaleString('en-US') || 0} 🥩 | Morale: ${calcMorale(user).toLocaleString('en-US')}`,
         ].join('\n'));
 
     const actionMenu = new StringSelectMenuBuilder()
@@ -216,7 +216,7 @@ async function handleModal(interaction, action, args) {
             const cost = amt * 150;
             if ((user.balance||0) < cost) return ephemeralReply(interaction, `⚠️ Need ${cost} 🪙.`);
             await db.run('UPDATE users SET balance=balance-?, mercs_temp=COALESCE(mercs_temp,0)+? WHERE id=?', cost, amt, uid);
-            return ephemeralReply(interaction, `🗡️ Hired **${amt.toLocaleString("en-US")} mercenaries** for ${cost.toLocaleString("en-US")} 🪙. *${MERC_DESC}*`);
+            return ephemeralReply(interaction, `🗡️ Hired **${amt.toLocaleString('en-US')} mercenaries** for ${cost.toLocaleString('en-US')} 🪙. *${MERC_DESC}*`);
         }
 
         const def = ARMY_TYPES[unitType];
@@ -225,25 +225,24 @@ async function handleModal(interaction, action, args) {
         const armySize = user.mil_militia + user.mil_infantry + user.mil_cavalry + user.mil_ranged + user.mil_siege + user.mil_swordsman + user.mil_spearmen
 
         const maxRecruits = Math.floor((user.pop_commoners||0)*0.10);
-        if (armySize + amt > maxRecruits) return ephemeralReply(interaction, `⚠️ Max army size is ${maxRecruits.toLocaleString("en-US")} (10% of commoners). Your army size is ${armySize.toLocaleString("en-US")}.`);
+        if (armySize + amt > maxRecruits) return ephemeralReply(interaction, `⚠️ Max army size is ${maxRecruits.toLocaleString('en-US')} (10% of commoners). Your army size is ${armySize.toLocaleString('en-US')}.`);
 
         const metCost = def.cost_met * amt;
-        if (metCost > 0 && (user.metallurgy||0) < metCost) return ephemeralReply(interaction, `⚠️ Need ${metCost.toLocaleString("en-US")} 🔩.`);
+        if (metCost > 0 && (user.metallurgy||0) < metCost) return ephemeralReply(interaction, `⚠️ Need ${metCost.toLocaleString('en-US')} 🔩.`);
 
         const balCost = def.cost_balance * amt;
-        if ((user.balance||0) < balCost) return ephemeralReply(interaction, `⚠️ Need ${balCost.toLocaleString("en-US")} 🪙.`);
+        if ((user.balance||0) < balCost) return ephemeralReply(interaction, `⚠️ Need ${balCost.toLocaleString('en-US')} 🪙.`);
 
         const colMap = { MILITIA:'mil_militia', SPEARMEN:'mil_spearmen', SWORDSMAN:'mil_swordsman', SHIELD:'mil_shield', CAVALRY:'mil_cavalry', RANGED:'mil_ranged', SIEGE:'mil_siege' };
         const col = colMap[unitType];
         const updated = { ...user, [col]: (user[col]||0)+amt };
         const newMaint = calcMaintenance(updated);
-        //await db.run(`UPDATE users SET balance=balance-?, metallurgy=COALESCE(metallurgy,0)-?, ${col}=COALESCE(${col},0)+?, pop_commoners=pop_commoners-?, mil_maintenance_cost=? WHERE id=?`, balCost, metCost, amt, amt, newMaint, uid);
-        await db.run(`UPDATE users SET balance=balance-?, metallurgy=COALESCE(metallurgy,0)-?, ${col}=COALESCE(${col},0)+?, mil_maintenance_cost=? WHERE id=?`, balCost, metCost, amt, newMaint, uid);
-
+        await db.run(`UPDATE users SET balance=balance-?, metallurgy=COALESCE(metallurgy,0)-?, ${col}=COALESCE(${col},0)+?, pop_commoners=pop_commoners-?, mil_maintenance_cost=? WHERE id=?`, balCost, metCost, amt, amt, newMaint, uid);
+        
         const strMod = Math.max(0, getMod(user.attr_str||10));
         const discount = Math.min(0.30, strMod*0.01);
         const daily = Math.floor(def.food_per_unit*amt*(1-discount));
-        return ephemeralReply(interaction, `⚔️ Recruited **${amt.toLocaleString("en-US")} ${def.name}** for ${balCost.toLocaleString("en-US")} 🪙${metCost>0?' + '+metCost.toLocaleString("en-US")+' 🔩':''}. Upkeep: ${daily.toLocaleString("en-US")} 🥩/day.`);
+        return ephemeralReply(interaction, `⚔️ Recruited **${amt.toLocaleString('en-US')} ${def.name}** for ${balCost.toLocaleString('en-US')} 🪙${metCost>0?' + '+metCost.toLocaleString('en-US')+' 🔩':''}. Upkeep: ${daily.toLocaleString('en-US')} 🥩/day.`);
     }
 
     // Siege modal submit
@@ -387,7 +386,7 @@ async function handleFormationSubmit(interaction, uid, targetId, formationKey, m
     let anyCommitted = false;
     for (const col of cols) {
         let val = 0;
-        try { val = parseInt(interaction.fields.getTextInputValue(col)) || 0; } catch (_) {}
+        try { val = parseInt(interaction.fields.getTextInputValue(col)) || 0; } catch {}
         commits[col] = Math.floor((atk[col] || 0) * Math.min(100, Math.max(0, val)) / 100);
         if (commits[col] > 0) anyCommitted = true;
         if (col !== 'mil_siege') totalUnits += commits[col];

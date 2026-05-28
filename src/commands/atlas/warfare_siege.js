@@ -175,8 +175,8 @@ async function handleSiegeConfirm(interaction, atkId, defId, townId) {
             .setColor(isWin ? 0x00FF88 : 0xFF0000)
             .setDescription(`${siegeName}\nAtk: ${atkPower} vs Def: ${defPower}${!defSupplied ? ' *(defender undersupplied)*' : ''}\n${isWin ? '+2 Prestige' : atkWins ? '-3 Stability' : '-2 Stability'}`);
         let sent = false;
-        if (chan) { try { await chan.send({ content: `<@${uid}>`, embeds: [emb] }); sent = true; } catch (_) {} }
-        if (!sent) { try { const u = await interaction.client.users.fetch(uid); if (u) await u.send({ embeds: [emb] }); } catch (_) {} }
+        if (chan) { try { await chan.send({ content: `<@${uid}>`, embeds: [emb] }); sent = true; } catch {} }
+        if (!sent) { try { const u = await interaction.client.users.fetch(uid); if (u) await u.send({ embeds: [emb] }); } catch {} }
     }
 }
 
